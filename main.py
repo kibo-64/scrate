@@ -1,0 +1,710 @@
+"""
+Scrate API — Backend
+Universal review aggregator: movies, TV, games, music, books, products
+OmniScore = weighted AI-calculated master score across all sources
+"""
+
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+import httpx
+import json
+import os
+import re
+import asyncio
+import hashlib
+from datetime import datetime, timedelta
+from bs4 import BeautifulSoup
+
+# ─── CONFIG ──────────────────────────────────────────────────────────────────
+
+TMDB_API_KEY      = os.getenv("TMDB_API_KEY", "")
+RAWG_API_KEY      = os.getenv("RAWG_API_KEY", "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
+# How long to keep cached results before refreshing (hours)
+CACHE_TTL_HOURS = 72
+
+# In-memory cache: {hash: {data, expires_at}}
+_cache: dict = {}
+
+# ─── APP ─────────────────────────────────────────────────────────────────────
+
+app = FastAPI(title="Scrate API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],   # tighten to your domain once live
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ─── CACHE HELPERS ───────────────────────────────────────────────────────────
+
+def make_key(query: str) -> str:
+    return hashlib.md5(query.lower().strip().encode()).hexdigest()
+
+def cache_get(key: str):
+    entry = _cache.get(key)
+    if not entry:
+        return None
+    if datetime.now() > entry["expires_at"]:
+        del _cache[key]
+        return None
+    return entry["data"]
+
+def cache_set(key: str, data: dict):
+    _cache[key] = {
+        "data": data,
+        "expires_at": datetime.now() + timedelta(hours=CACHE_TTL_HOURS),
+    }
+
+# ─── SCORE HELPERS ───────────────────────────────────────────────────────────
+
+def normalize_to_100(score_str: str, out_of: str = None) -> float | None:
+    """Convert any score format (4.5/5, 8.8/10, 87/100, 94%) → 0-100 float."""
+    try:
+        val = float(re.sub(r"[^0-9.]", "", score_str))
+    except (ValueError, TypeError):
+        return None
+
+    if out_of:
+        try:
+            max_val = float(out_of)
+            if max_val > 0:
+                return round((val / max_val) * 100, 1)
+        except ValueError:
+            pass
+
+    # Auto-detect scale
+    if val <= 5:
+        return round((val / 5) * 100, 1)
+    elif val <= 10:
+        return round((val / 10) * 100, 1)
+    else:
+        return round(min(val, 100), 1)
+
+
+def calculate_omniscore(sources: list) -> int:
+    """
+    Weighted average of all source sentiments.
+    Expert reviews carry 1.5x weight, Users 1.0x, Community 0.8x.
+    """
+    if not sources:
+        return 0
+
+    weight_map = {"Expert": 1.5, "Users": 1.0, "Community": 0.8}
+    weighted_sum = 0.0
+    total_weight = 0.0
+
+    for s in sources:
+        sentiment = s.get("sentiment")
+        if sentiment is None:
+            continue
+        w = weight_map.get(s.get("type", "Users"), 1.0)
+        weighted_sum += sentiment * w
+        total_weight += w
+
+    if total_weight == 0:
+        return 0
+
+    raw = weighted_sum / total_weight
+    return min(100, max(0, round(raw)))
+
+
+def verdict_from_score(score: int) -> str:
+    if score >= 90:  return "Exceptional"
+    if score >= 80:  return "Highly Recommended"
+    if score >= 70:  return "Solid Choice"
+    if score >= 55:  return "Mixed Reviews"
+    return "Proceed with Caution"
+
+
+def build_source(name, source_type, icon, color, score_str, out_of, reviews=None, is_award=False):
+    """Build a standardised source dict including auto-computed sentiment."""
+    sentiment = normalize_to_100(score_str, out_of) if not is_award else 95
+    return {
+        "name":      name,
+        "type":      source_type,
+        "icon":      icon,
+        "color":     color,
+        "score":     score_str,
+        "outOf":     out_of,
+        "reviews":   reviews,
+        "sentiment": int(sentiment) if sentiment is not None else 75,
+        "isAward":   is_award,
+    }
+
+# ─── HTTP HEADERS ─────────────────────────────────────────────────────────────
+
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+# ─── CATEGORY DETECTION ───────────────────────────────────────────────────────
+
+GAME_KW    = {"game","ps5","xbox","nintendo","steam","playstation","pokemon",
+               "zelda","mario","call of duty","fifa","fortnite","minecraft","elden ring"}
+MUSIC_KW   = {"album","song","artist","band","track","ep","lp","mixtape","single","discography"}
+BOOK_KW    = {"book","novel","author","memoir","biography","fiction","nonfiction","trilogy"}
+MOVIE_KW   = {"movie","film","cinema","director","sequel","prequel","box office","series","show","season"}
+
+def detect_category(query: str) -> str:
+    q = query.lower()
+    for kw in GAME_KW:
+        if kw in q: return "game"
+    for kw in MUSIC_KW:
+        if kw in q: return "music"
+    for kw in BOOK_KW:
+        if kw in q: return "book"
+    for kw in MOVIE_KW:
+        if kw in q: return "movie"
+    return "auto"
+
+# ─── SCRAPERS ────────────────────────────────────────────────────────────────
+
+async def scrape_metacritic_movie(title: str, year: str, client: httpx.AsyncClient) -> dict | None:
+    """Attempt to scrape Metacritic score for a movie/show."""
+    slug = re.sub(r"[^a-z0-9\s-]", "", title.lower()).strip().replace(" ", "-")
+    urls_to_try = [
+        f"https://www.metacritic.com/movie/{slug}/",
+        f"https://www.metacritic.com/tv/{slug}/",
+    ]
+    for url in urls_to_try:
+        try:
+            r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+            if r.status_code != 200:
+                continue
+            soup = BeautifulSoup(r.text, "html.parser")
+            # Metacritic embeds score in JSON-LD
+            ld = soup.find("script", type="application/ld+json")
+            if ld:
+                data = json.loads(ld.string)
+                rating = data.get("aggregateRating", {})
+                val = rating.get("ratingValue")
+                if val:
+                    return build_source(
+                        "Metacritic", "Expert", "📊", "#ffcc34",
+                        str(int(float(val))), "100"
+                    )
+        except Exception:
+            continue
+    return None
+
+
+async def scrape_rt_movie(title: str, client: httpx.AsyncClient) -> dict | None:
+    """Attempt to scrape Rotten Tomatoes Tomatometer."""
+    slug = re.sub(r"[^a-z0-9\s_]", "", title.lower()).strip().replace(" ", "_")
+    url = f"https://www.rottentomatoes.com/m/{slug}"
+    try:
+        r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+        if r.status_code != 200:
+            return None
+        soup = BeautifulSoup(r.text, "html.parser")
+        # RT embeds score as JSON in a script tag
+        for script in soup.find_all("script"):
+            text = script.string or ""
+            if "tomatoMeter" in text or "criticsScore" in text:
+                m = re.search(r'"tomatoMeter":\s*(\d+)', text)
+                if not m:
+                    m = re.search(r'"criticsScore":\s*(\d+)', text)
+                if m:
+                    score = m.group(1)
+                    return build_source(
+                        "Rotten Tomatoes", "Expert", "🍅", "#fa320a",
+                        score + "%", None
+                    )
+    except Exception:
+        pass
+    return None
+
+
+async def scrape_imdb(title: str, year: str, client: httpx.AsyncClient) -> dict | None:
+    """Try to pull IMDb rating from their search."""
+    try:
+        url = f"https://www.imdb.com/find/?q={title.replace(' ', '+')}&s=tt&ttype=ft"
+        r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+        if r.status_code != 200:
+            return None
+        soup = BeautifulSoup(r.text, "html.parser")
+        # Find first result link
+        result = soup.find("a", href=re.compile(r"/title/tt\d+/"))
+        if not result:
+            return None
+        href = result["href"]
+        m = re.search(r"/title/(tt\d+)/", href)
+        if not m:
+            return None
+        tt_id = m.group(1)
+        # Fetch that title page
+        title_url = f"https://www.imdb.com/title/{tt_id}/"
+        tr = await client.get(title_url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+        if tr.status_code != 200:
+            return None
+        tsoup = BeautifulSoup(tr.text, "html.parser")
+        ld = tsoup.find("script", type="application/ld+json")
+        if ld:
+            data = json.loads(ld.string)
+            rating = data.get("aggregateRating", {})
+            val = rating.get("ratingValue")
+            count = rating.get("ratingCount")
+            if val:
+                return build_source(
+                    "IMDb", "Users", "⭐", "#f5c518",
+                    str(val), "10",
+                    reviews=f"{int(count):,}" if count else None
+                )
+    except Exception:
+        pass
+    return None
+
+# ─── TMDB: MOVIES & TV ────────────────────────────────────────────────────────
+
+async def search_tmdb(query: str, client: httpx.AsyncClient) -> dict | None:
+    if not TMDB_API_KEY:
+        return None
+
+    base = "https://api.themoviedb.org/3"
+
+    # Multi-search (movies + TV + people)
+    r = await client.get(
+        f"{base}/search/multi",
+        params={"api_key": TMDB_API_KEY, "query": query, "language": "en-US", "page": 1},
+    )
+    results = r.json().get("results", [])
+    item = next((x for x in results if x.get("media_type") in ("movie", "tv")), None)
+    if not item:
+        return None
+
+    media_type = item["media_type"]
+    item_id    = item["id"]
+
+    # Full detail
+    dr = await client.get(
+        f"{base}/{media_type}/{item_id}",
+        params={"api_key": TMDB_API_KEY, "language": "en-US"},
+    )
+    detail = dr.json()
+
+    title    = detail.get("title") or detail.get("name", "")
+    year     = (detail.get("release_date") or detail.get("first_air_date", ""))[:4]
+    overview = detail.get("overview", "")
+    poster   = (
+        f"https://image.tmdb.org/t/p/w500{detail['poster_path']}"
+        if detail.get("poster_path") else None
+    )
+    vote_avg   = detail.get("vote_average", 0)
+    vote_count = detail.get("vote_count", 0)
+    genres     = [g["name"] for g in detail.get("genres", [])]
+    category   = "movie" if media_type == "movie" else "tv"
+
+    sources = []
+    if vote_avg > 0:
+        sources.append(build_source(
+            "TMDB Community", "Users", "🎬", "#01b4e4",
+            str(round(vote_avg, 1)), "10",
+            reviews=f"{vote_count:,}"
+        ))
+
+    # Scrape RT, Metacritic, IMDb in parallel
+    extra = await asyncio.gather(
+        scrape_rt_movie(title, client),
+        scrape_metacritic_movie(title, year, client),
+        scrape_imdb(title, year, client),
+        return_exceptions=True,
+    )
+    for s in extra:
+        if s and not isinstance(s, Exception):
+            sources.append(s)
+
+    return {
+        "title":    title,
+        "subtitle": ", ".join(genres),
+        "category": category,
+        "image_url": poster,
+        "year":     year,
+        "overview": overview,
+        "sources":  sources,
+    }
+
+# ─── RAWG: GAMES ─────────────────────────────────────────────────────────────
+
+async def search_rawg(query: str, client: httpx.AsyncClient) -> dict | None:
+    if not RAWG_API_KEY:
+        return None
+
+    r = await client.get(
+        "https://api.rawg.io/api/games",
+        params={"key": RAWG_API_KEY, "search": query, "page_size": 1},
+    )
+    results = r.json().get("results", [])
+    if not results:
+        return None
+
+    game    = results[0]
+    game_id = game["id"]
+
+    dr = await client.get(
+        f"https://api.rawg.io/api/games/{game_id}",
+        params={"key": RAWG_API_KEY},
+    )
+    detail = dr.json()
+
+    rating        = detail.get("rating", 0)        # out of 5
+    ratings_count = detail.get("ratings_count", 0)
+    metacritic    = detail.get("metacritic")
+    image         = detail.get("background_image")
+    genres        = [g["name"] for g in detail.get("genres", [])]
+    platforms     = [p["platform"]["name"] for p in detail.get("platforms", [])[:4]]
+    description   = re.sub(r"<[^>]+>", "", detail.get("description", ""))[:500]
+
+    sources = []
+    if rating > 0:
+        sources.append(build_source(
+            "RAWG Community", "Users", "🎮", "#252525",
+            str(round(rating, 1)), "5",
+            reviews=f"{ratings_count:,}"
+        ))
+    if metacritic:
+        sources.append(build_source(
+            "Metacritic", "Expert", "📊", "#ffcc34",
+            str(metacritic), "100"
+        ))
+
+    # Also try to scrape Metacritic game page
+    mc_slug = re.sub(r"[^a-z0-9\s-]", "", detail.get("name", "").lower()).strip().replace(" ", "-")
+    try:
+        mc_url = f"https://www.metacritic.com/game/{mc_slug}/"
+        mr = await client.get(mc_url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=8)
+        if mr.status_code == 200:
+            soup = BeautifulSoup(mr.text, "html.parser")
+            ld = soup.find("script", type="application/ld+json")
+            if ld:
+                ld_data = json.loads(ld.string)
+                rv = ld_data.get("aggregateRating", {}).get("ratingValue")
+                if rv and not metacritic:  # don't double-count
+                    sources.append(build_source(
+                        "Metacritic", "Expert", "📊", "#ffcc34",
+                        str(int(float(rv))), "100"
+                    ))
+    except Exception:
+        pass
+
+    return {
+        "title":    detail.get("name", ""),
+        "subtitle": ", ".join(genres) + (" · " + ", ".join(platforms) if platforms else ""),
+        "category": "game",
+        "image_url": image,
+        "year":     (detail.get("released") or "")[:4],
+        "overview": description,
+        "sources":  sources,
+    }
+
+# ─── MUSICBRAINZ: MUSIC ───────────────────────────────────────────────────────
+
+async def search_music(query: str, client: httpx.AsyncClient) -> dict | None:
+    mb_headers = {
+        "User-Agent": "Scrate/1.0 (scrate.io; contact@scrate.io)",
+        "Accept": "application/json",
+    }
+
+    # Search releases first
+    r = await client.get(
+        "https://musicbrainz.org/ws/2/release/",
+        params={"query": query, "fmt": "json", "limit": 1},
+        headers=mb_headers,
+    )
+    releases = r.json().get("releases", [])
+    if not releases:
+        # Fall back to recording search
+        r2 = await client.get(
+            "https://musicbrainz.org/ws/2/recording/",
+            params={"query": query, "fmt": "json", "limit": 1},
+            headers=mb_headers,
+        )
+        recordings = r2.json().get("recordings", [])
+        if not recordings:
+            return None
+        rec = recordings[0]
+        title  = rec.get("title", "")
+        artist = rec.get("artist-credit", [{}])[0].get("name", "") if rec.get("artist-credit") else ""
+        year   = (rec.get("first-release-date") or "")[:4]
+        mbid   = rec.get("releases", [{}])[0].get("id") if rec.get("releases") else None
+    else:
+        release = releases[0]
+        title   = release.get("title", "")
+        artist  = (
+            release.get("artist-credit", [{}])[0].get("name", "")
+            if release.get("artist-credit") else ""
+        )
+        year  = (release.get("date") or "")[:4]
+        mbid  = release.get("id")
+
+    # Fetch cover art
+    image_url = None
+    if mbid:
+        try:
+            cover_r = await client.get(
+                f"https://coverartarchive.org/release/{mbid}/front",
+                follow_redirects=True, timeout=6,
+            )
+            if cover_r.status_code == 200:
+                image_url = str(cover_r.url)
+        except Exception:
+            pass
+
+    # Scrape Last.fm for community score
+    sources = []
+    try:
+        lfm_url = (
+            f"https://www.last.fm/music/{artist.replace(' ', '+')}/"
+            f"{title.replace(' ', '+')}"
+        )
+        lr = await client.get(lfm_url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=8)
+        if lr.status_code == 200:
+            soup = BeautifulSoup(lr.text, "html.parser")
+            listeners_el = soup.find("abbr", class_=re.compile("listener"))
+            if not listeners_el:
+                # try meta
+                listeners_el = soup.find("meta", {"name": "description"})
+            if listeners_el:
+                sources.append(build_source(
+                    "Last.fm", "Community", "🎵", "#d51007",
+                    "N/A", None   # Last.fm doesn't give a numeric score easily
+                ))
+    except Exception:
+        pass
+
+    # RateYourMusic / AnyDecentMusic scores (opportunistic scraping)
+    try:
+        adm_url = f"https://www.anydecentmusic.com/search/?q={title.replace(' ', '+')}"
+        adm_r = await client.get(adm_url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=8)
+        if adm_r.status_code == 200:
+            adm_soup = BeautifulSoup(adm_r.text, "html.parser")
+            score_el = adm_soup.find("span", class_=re.compile("score|rating"))
+            if score_el:
+                score_text = score_el.get_text(strip=True)
+                if re.match(r"^\d+", score_text):
+                    sources.append(build_source(
+                        "AnyDecentMusic", "Expert", "🎼", "#1db954",
+                        score_text, "10"
+                    ))
+    except Exception:
+        pass
+
+    return {
+        "title":    title,
+        "subtitle": artist,
+        "category": "music",
+        "image_url": image_url,
+        "year":     year,
+        "overview": f"By {artist}" + (f" · {year}" if year else ""),
+        "sources":  sources,
+    }
+
+# ─── OPEN LIBRARY: BOOKS ─────────────────────────────────────────────────────
+
+async def search_books(query: str, client: httpx.AsyncClient) -> dict | None:
+    r = await client.get(
+        "https://openlibrary.org/search.json",
+        params={
+            "q": query, "limit": 1,
+            "fields": "key,title,author_name,first_publish_year,cover_i,"
+                      "subject,ratings_average,ratings_count,number_of_pages_median",
+        },
+    )
+    docs = r.json().get("docs", [])
+    if not docs:
+        return None
+
+    book     = docs[0]
+    title    = book.get("title", "")
+    authors  = book.get("author_name", [])
+    year     = str(book.get("first_publish_year", ""))
+    cover_id = book.get("cover_i")
+    image_url = f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg" if cover_id else None
+    rating    = book.get("ratings_average")
+    r_count   = book.get("ratings_count", 0)
+
+    sources = []
+    if rating:
+        sources.append(build_source(
+            "Open Library", "Users", "📚", "#2b5797",
+            str(round(rating, 1)), "5",
+            reviews=f"{r_count:,}"
+        ))
+
+    # Also try Goodreads (scraping — may be blocked)
+    try:
+        gr_url = f"https://www.goodreads.com/search?q={title.replace(' ', '+')}"
+        gr_r = await client.get(gr_url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=8)
+        if gr_r.status_code == 200:
+            soup = BeautifulSoup(gr_r.text, "html.parser")
+            rating_el = soup.find("span", class_=re.compile("minirating|average"))
+            if rating_el:
+                m = re.search(r"(\d\.\d+)", rating_el.get_text())
+                if m:
+                    sources.append(build_source(
+                        "Goodreads", "Users", "📖", "#553b08",
+                        m.group(1), "5"
+                    ))
+    except Exception:
+        pass
+
+    return {
+        "title":    title,
+        "subtitle": ", ".join(authors[:2]) if authors else "Unknown Author",
+        "category": "book",
+        "image_url": image_url,
+        "year":     year,
+        "overview": "",
+        "sources":  sources,
+    }
+
+# ─── AI OMNISCORE SUMMARY ─────────────────────────────────────────────────────
+
+async def generate_ai_analysis(
+    title: str,
+    category: str,
+    sources: list,
+    overview: str,
+    omniscore: int,
+) -> dict:
+    """Call Claude Haiku to generate OmniScore summary, pros, and cons."""
+    if not ANTHROPIC_API_KEY:
+        return {
+            "summary": "AI summary unavailable. Add your ANTHROPIC_API_KEY to enable this.",
+            "pros": [],
+            "cons": [],
+        }
+
+    # Lazy import — anthropic library loaded only when needed
+    import anthropic as _anthropic
+
+    sources_text = "\n".join(
+        f"  • {s['name']} ({s['type']}): {s['score']}"
+        + (f"/{s['outOf']}" if s.get("outOf") else "")
+        + (f" — {s['reviews']} reviews" if s.get("reviews") else "")
+        for s in sources
+    ) or "  • No third-party scores available yet."
+
+    prompt = f"""You are Scrate's AI analyst. Scrate is a review aggregator that gives every product, movie, game, book, and album a single OmniScore out of 100.
+
+Produce a short, punchy analysis for:
+  Title:      {title}
+  Category:   {category}
+  OmniScore:  {omniscore}/100
+  Overview:   {overview[:300] if overview else "N/A"}
+
+Scores from across the web:
+{sources_text}
+
+Reply ONLY with valid JSON in this exact format — no extra text:
+{{
+  "summary": "2-3 punchy sentences. Be specific. State what the consensus is and WHY. Mention standout praise or criticism.",
+  "pros": ["pro 1 (max 8 words)", "pro 2", "pro 3", "pro 4"],
+  "cons": ["con 1 (max 8 words)", "con 2"]
+}}"""
+
+    client = _anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=450,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    raw = msg.content[0].text.strip()
+    m = re.search(r"\{.*\}", raw, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group())
+        except json.JSONDecodeError:
+            pass
+
+    return {"summary": raw, "pros": [], "cons": []}
+
+# ─── MAIN SEARCH ENDPOINT ────────────────────────────────────────────────────
+
+@app.get("/search")
+async def search(q: str = Query(..., min_length=2, description="Product / movie / game / album to search")):
+    """
+    Universal search. Auto-detects category (movie, tv, game, music, book).
+    Returns OmniScore + per-source scores + AI summary.
+    Results cached for CACHE_TTL_HOURS hours.
+    """
+    key    = make_key(q)
+    cached = cache_get(key)
+    if cached:
+        return cached
+
+    category = detect_category(q)
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        result = None
+
+        if category == "game":
+            result = await search_rawg(q, client)
+        elif category == "music":
+            result = await search_music(q, client)
+        elif category == "book":
+            result = await search_books(q, client)
+        elif category == "movie":
+            result = await search_tmdb(q, client)
+        else:
+            # Auto mode: fire all fetchers simultaneously, pick first non-null
+            tasks = await asyncio.gather(
+                search_tmdb(q, client),
+                search_rawg(q, client),
+                search_music(q, client),
+                search_books(q, client),
+                return_exceptions=True,
+            )
+            for r in tasks:
+                if r and not isinstance(r, Exception):
+                    result = r
+                    break
+
+        if not result:
+            raise HTTPException(status_code=404, detail=f"No results found for '{q}'")
+
+        # Compute OmniScore
+        omniscore = calculate_omniscore(result["sources"])
+        result["omniscore"] = omniscore
+        result["verdict"]   = verdict_from_score(omniscore)
+
+        # AI analysis (runs after score so Haiku can reference it)
+        ai = await generate_ai_analysis(
+            result["title"],
+            result["category"],
+            result["sources"],
+            result.get("overview", ""),
+            omniscore,
+        )
+        result["ai_summary"] = ai.get("summary", "")
+        result["pros"]       = ai.get("pros", [])
+        result["cons"]       = ai.get("cons", [])
+
+    cache_set(key, result)
+    return result
+
+
+@app.get("/health")
+async def health():
+    return {
+        "status":  "ok",
+        "service": "Scrate API",
+        "version": "1.0.0",
+        "apis": {
+            "tmdb":      bool(TMDB_API_KEY),
+            "rawg":      bool(RAWG_API_KEY),
+            "anthropic": bool(ANTHROPIC_API_KEY),
+        },
+    }
+
+
+@app.get("/")
+async def root():
+    return {"message": "Scrate API is running. Use GET /search?q=your+query"}
