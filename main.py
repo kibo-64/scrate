@@ -29,7 +29,7 @@ _cache: dict = {}
 
 # âââ APP âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-app = FastAPI(title="Scrate API", version="1.1.0")
+app = FastAPI(title="Scrate API", version="1.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -188,7 +188,7 @@ async def scrape_metacritic_movie(title: str, year: str, client: httpx.AsyncClie
                 val = rating.get("ratingValue")
                 if val:
                     return build_source(
-                        "Metacritic", "Expert", "ð", "#ffcc34",
+                        "Metacritic", "Expert", "&#128202;", "#ffcc34",
                         str(int(float(val))), "100"
                     )
         except Exception:
@@ -215,7 +215,7 @@ async def scrape_rt_movie(title: str, client: httpx.AsyncClient) -> dict | None:
                 if m:
                     score = m.group(1)
                     return build_source(
-                        "Rotten Tomatoes", "Expert", "ð", "#fa320a",
+                        "Rotten Tomatoes", "Expert", "&#127813;", "#fa320a",
                         score + "%", None
                     )
     except Exception:
@@ -254,7 +254,7 @@ async def scrape_imdb(title: str, year: str, client: httpx.AsyncClient) -> dict 
             count = rating.get("ratingCount")
             if val:
                 return build_source(
-                    "IMDb", "Users", "â­", "#f5c518",
+                    "IMDb", "Users", "&#11088;", "#f5c518",
                     str(val), "10",
                     reviews=f"{int(count):,}" if count else None
                 )
@@ -270,18 +270,26 @@ async def candidates_rawg(query: str, client: httpx.AsyncClient) -> list:
     try:
         r = await client.get(
             "https://api.rawg.io/api/games",
-            params={"key": RAWG_API_KEY, "search": query, "page_size": 8},
+            params={
+                "key": RAWG_API_KEY,
+                "search": query,
+                "page_size": 10,
+                "ordering": "-rating",
+            },
         )
         results = []
-        for g in r.json().get("results", [])[:8]:
+        for g in r.json().get("results", [])[:10]:
             genres = [gen["name"] for gen in g.get("genres", [])[:2]]
+            raw_rating = g.get("rating", 0)
             results.append({
-                "id":        str(g["id"]),
-                "category":  "game",
-                "title":     g.get("name", ""),
-                "year":      (g.get("released") or "")[:4],
-                "image_url": g.get("background_image"),
-                "subtitle":  ", ".join(genres),
+                "id":         str(g["id"]),
+                "category":   "game",
+                "title":      g.get("name", ""),
+                "year":       (g.get("released") or "")[:4],
+                "image_url":  g.get("background_image"),
+                "subtitle":   ", ".join(genres),
+                "rating":     round(raw_rating, 1) if raw_rating else None,
+                "rating_max": 5,
             })
         return results
     except Exception:
@@ -306,13 +314,16 @@ async def candidates_tmdb(query: str, client: httpx.AsyncClient) -> list:
                 f"https://image.tmdb.org/t/p/w200{item['poster_path']}"
                 if item.get("poster_path") else None
             )
+            vote_avg = item.get("vote_average", 0)
             results.append({
-                "id":        str(item["id"]),
-                "category":  item["media_type"],
-                "title":     title,
-                "year":      year,
-                "image_url": poster,
-                "subtitle":  (item.get("overview") or "")[:120],
+                "id":         str(item["id"]),
+                "category":   item["media_type"],
+                "title":      title,
+                "year":       year,
+                "image_url":  poster,
+                "subtitle":   (item.get("overview") or "")[:120],
+                "rating":     round(vote_avg, 1) if vote_avg else None,
+                "rating_max": 10,
             })
             if len(results) >= 8:
                 break
@@ -403,13 +414,13 @@ async def score_rawg_by_id(game_id: str, client: httpx.AsyncClient) -> dict | No
         sources = []
         if rating > 0:
             sources.append(build_source(
-                "RAWG Community", "Users", "ð®", "#252525",
+                "RAWG Community", "Users", "&#127918;", "#252525",
                 str(round(rating, 1)), "5",
                 reviews=f"{ratings_count:,}"
             ))
         if metacritic:
             sources.append(build_source(
-                "Metacritic", "Expert", "ð", "#ffcc34",
+                "Metacritic", "Expert", "&#128202;", "#ffcc34",
                 str(metacritic), "100"
             ))
 
@@ -425,7 +436,7 @@ async def score_rawg_by_id(game_id: str, client: httpx.AsyncClient) -> dict | No
                     rv = ld_data.get("aggregateRating", {}).get("ratingValue")
                     if rv and not metacritic:
                         sources.append(build_source(
-                            "Metacritic", "Expert", "ð", "#ffcc34",
+                            "Metacritic", "Expert", "&#128202;", "#ffcc34",
                             str(int(float(rv))), "100"
                         ))
         except Exception:
@@ -470,7 +481,7 @@ async def score_tmdb_by_id(item_id: str, media_type: str, client: httpx.AsyncCli
         sources = []
         if vote_avg > 0:
             sources.append(build_source(
-                "TMDB Community", "Users", "ð¬", "#01b4e4",
+                "TMDB Community", "Users", "&#127916;", "#01b4e4",
                 str(round(vote_avg, 1)), "10",
                 reviews=f"{vote_count:,}"
             ))
@@ -527,7 +538,7 @@ async def score_book_by_id(book_id: str, client: httpx.AsyncClient) -> dict | No
         sources = []
         if avg:
             sources.append(build_source(
-                "Open Library", "Users", "ð", "#2b5797",
+                "Open Library", "Users", "&#128218;", "#2b5797",
                 str(round(avg, 1)), "5",
                 reviews=f"{count:,}"
             ))
@@ -558,7 +569,7 @@ async def score_book_by_id(book_id: str, client: httpx.AsyncClient) -> dict | No
                     m = re.search(r"(\d\.\d+)", rating_el.get_text())
                     if m:
                         sources.append(build_source(
-                            "Goodreads", "Users", "ð", "#553b08",
+                            "Goodreads", "Users", "&#128214;", "#553b08",
                             m.group(1), "5"
                         ))
         except Exception:
@@ -620,7 +631,7 @@ async def score_music_by_id(mbid: str, client: httpx.AsyncClient) -> dict | None
                     score_text = score_el.get_text(strip=True)
                     if re.match(r"^\d+", score_text):
                         sources.append(build_source(
-                            "AnyDecentMusic", "Expert", "ð¼", "#1db954",
+                            "AnyDecentMusic", "Expert", "&#127932;", "#1db954",
                             score_text, "10"
                         ))
         except Exception:
@@ -753,7 +764,7 @@ async def search_books(query: str, client: httpx.AsyncClient) -> dict | None:
     sources = []
     if rating:
         sources.append(build_source(
-            "Open Library", "Users", "ð", "#2b5797",
+            "Open Library", "Users", "&#128218;", "#2b5797",
             str(round(rating, 1)), "5",
             reviews=f"{r_count:,}"
         ))
@@ -768,7 +779,7 @@ async def search_books(query: str, client: httpx.AsyncClient) -> dict | None:
                 m = re.search(r"(\d\.\d+)", rating_el.get_text())
                 if m:
                     sources.append(build_source(
-                        "Goodreads", "Users", "ð", "#553b08",
+                        "Goodreads", "Users", "&#128214;", "#553b08",
                         m.group(1), "5"
                     ))
     except Exception:
@@ -892,18 +903,18 @@ async def get_candidates(
             if isinstance(lst, list):
                 all_candidates.extend(lst)
 
-        # In auto mode: up to 4 per category, 12 total
+        # In auto mode: up to 5 per category, 16 total
         if category == "auto":
             seen_cats: dict = {}
             filtered = []
             for c in all_candidates:
                 cat = c["category"]
-                if seen_cats.get(cat, 0) < 4:
+                if seen_cats.get(cat, 0) < 5:
                     filtered.append(c)
                     seen_cats[cat] = seen_cats.get(cat, 0) + 1
-            all_candidates = filtered[:12]
+            all_candidates = filtered[:16]
         else:
-            all_candidates = all_candidates[:8]
+            all_candidates = all_candidates[:10]
 
     return {"candidates": all_candidates, "query": q, "category": category}
 
@@ -999,7 +1010,7 @@ async def health():
     return {
         "status":  "ok",
         "service": "Scrate API",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "apis": {
             "tmdb":      bool(TMDB_API_KEY),
             "rawg":      bool(RAWG_API_KEY),
