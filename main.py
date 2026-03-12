@@ -1,10 +1,11 @@
 """
-Scrawl API — Backend
+Scrawl API â Backend
 Universal review aggregator: movies, TV, games, music, books, products
 OmniScore = weighted AI-calculated master score across all sources
 """
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import json
@@ -16,7 +17,7 @@ from datetime import datetime, timedelta
 import unicodedata
 from bs4 import BeautifulSoup
 
-# ─── CONFIG ──────────────────────────────────────────────────────────────────
+# âââ CONFIG ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 TMDB_API_KEY          = os.getenv("TMDB_API_KEY", "")
 RAWG_API_KEY          = os.getenv("RAWG_API_KEY", "")
@@ -30,7 +31,7 @@ CACHE_TTL_HOURS = 72
 # In-memory cache: {hash: {data, expires_at}}
 _cache: dict = {}
 
-# ─── APP ─────────────────────────────────────────────────────────────────────
+# âââ APP âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 app = FastAPI(title="Scrawl API", version="1.3.0", description="scrawl it before you fall for it")
 
@@ -41,7 +42,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─── CACHE HELPERS ───────────────────────────────────────────────────────────
+# âââ CACHE HELPERS âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 def make_key(query: str) -> str:
     return hashlib.md5(query.lower().strip().encode()).hexdigest()
@@ -61,10 +62,10 @@ def cache_set(key: str, data: dict):
         "expires_at": datetime.now() + timedelta(hours=CACHE_TTL_HOURS),
     }
 
-# ─── SCORE HELPERS ───────────────────────────────────────────────────────────
+# âââ SCORE HELPERS âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 def normalize_to_100(score_str: str, out_of: str = None) -> float | None:
-    """Convert any score format (4.5/5, 8.8/10, 87/100, 94%) → 0-100 float."""
+    """Convert any score format (4.5/5, 8.8/10, 87/100, 94%) â 0-100 float."""
     try:
         val = float(re.sub(r"[^0-9.]", "", score_str))
     except (ValueError, TypeError):
@@ -137,7 +138,7 @@ def build_source(name, source_type, icon, color, score_str, out_of, reviews=None
         "isAward":   is_award,
     }
 
-# ─── HTTP HEADERS ─────────────────────────────────────────────────────────────
+# âââ HTTP HEADERS âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 BROWSER_HEADERS = {
     "User-Agent": (
@@ -148,7 +149,7 @@ BROWSER_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-# ─── CATEGORY DETECTION ───────────────────────────────────────────────────────
+# âââ CATEGORY DETECTION âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 GAME_KW    = {"game","ps5","xbox","nintendo","steam","playstation","pokemon",
                "zelda","mario","call of duty","fifa","fortnite","minecraft","elden ring"}
@@ -168,7 +169,7 @@ def detect_category(query: str) -> str:
         if kw in q: return "movie"
     return "auto"
 
-# ─── SCRAPERS ────────────────────────────────────────────────────────────────
+# âââ SCRAPERS ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 async def scrape_metacritic_movie(title: str, year: str, client: httpx.AsyncClient) -> dict | None:
     """Attempt to scrape Metacritic score for a movie/show."""
@@ -265,7 +266,7 @@ async def scrape_imdb(title: str, year: str, client: httpx.AsyncClient) -> dict 
         pass
     return None
 
-# ─── CANDIDATE HELPERS (lightweight, no scraping) ────────────────────────────
+# âââ CANDIDATE HELPERS (lightweight, no scraping) ââââââââââââââââââââââââââââ
 
 async def candidates_rawg(query: str, client: httpx.AsyncClient) -> list:
     if not RAWG_API_KEY:
@@ -348,7 +349,7 @@ async def candidates_books(query: str, client: httpx.AsyncClient) -> list:
             cover_id  = book.get("cover_i")
             image_url = f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else None
             authors   = book.get("author_name", [])
-            # key looks like "/works/OL45883W" – store without leading slash
+            # key looks like "/works/OL45883W" â store without leading slash
             raw_key   = book.get("key", "")
             book_id   = raw_key.lstrip("/")
             results.append({
@@ -393,7 +394,7 @@ async def candidates_music(query: str, client: httpx.AsyncClient) -> list:
     except Exception:
         return []
 
-# ─── CLOUDFLARE BROWSER RENDERING ──────────────────────────────────────────────
+# âââ CLOUDFLARE BROWSER RENDERING ââââââââââââââââââââââââââââââââââââââââââââââ
 
 async def cf_fetch(url: str, client: httpx.AsyncClient) -> str | None:
     """Fetch a JS-rendered page via Cloudflare Browser Rendering /content API."""
@@ -429,10 +430,10 @@ async def cf_fetch(url: str, client: httpx.AsyncClient) -> str | None:
     return None
 
 
-# ─── NEW SCRAPERS (v1.3.0) ────────────────────────────────────────────────────
+# âââ NEW SCRAPERS (v1.3.0) ââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 async def score_opencritic(title: str, client: httpx.AsyncClient) -> dict | None:
-    """OpenCritic public API — no key required."""
+    """OpenCritic public API â no key required."""
     try:
         sr = await client.get(
             "https://api.opencritic.com/api/game/search",
@@ -509,7 +510,7 @@ async def score_steam(rawg_id: str, client: httpx.AsyncClient) -> dict | None:
 
 
 async def score_rogerebert(title: str, year: str, client: httpx.AsyncClient) -> dict | None:
-    """Roger Ebert / RogerEbert.com — JSON-LD star rating (0–4)."""
+    """Roger Ebert / RogerEbert.com â JSON-LD star rating (0â4)."""
     try:
         slug = re.sub(r"[^a-z0-9\s-]", "", title.lower()).strip().replace(" ", "-")
         urls = [f"https://www.rogerebert.com/reviews/{slug}-{year}" if year else None,
@@ -543,7 +544,7 @@ async def score_rogerebert(title: str, year: str, client: httpx.AsyncClient) -> 
 
 
 async def score_letterboxd(title: str, year: str, client: httpx.AsyncClient) -> dict | None:
-    """Letterboxd average user rating (0–5 stars)."""
+    """Letterboxd average user rating (0â5 stars)."""
     try:
         slug = re.sub(r"[^a-z0-9\s-]", "", title.lower()).strip().replace(" ", "-")
         url  = f"https://letterboxd.com/film/{slug}/"
@@ -584,7 +585,7 @@ async def score_letterboxd(title: str, year: str, client: httpx.AsyncClient) -> 
 
 
 async def score_pitchfork(title: str, artist: str, client: httpx.AsyncClient) -> dict | None:
-    """Pitchfork album review score (0–10)."""
+    """Pitchfork album review score (0â10)."""
     try:
         query = f"{title} {artist}".strip().replace(" ", "+")
         search_url = f"https://pitchfork.com/search/?query={query}&types=reviews"
@@ -1000,7 +1001,7 @@ async def score_rawg_by_id(game_id: str, client: httpx.AsyncClient) -> dict | No
 
         return {
             "title":     game_name,
-            "subtitle":  ", ".join(genres) + (" · " + ", ".join(platforms) if platforms else ""),
+            "subtitle":  ", ".join(genres) + (" Â· " + ", ".join(platforms) if platforms else ""),
             "category":  "game",
             "image_url": image,
             "year":      (detail.get("released") or "")[:4],
@@ -1211,13 +1212,13 @@ async def score_music_by_id(mbid: str, client: httpx.AsyncClient) -> dict | None
             "category":  "music",
             "image_url": image_url,
             "year":      year,
-            "overview":  f"By {artist}" + (f" · {year}" if year else ""),
+            "overview":  f"By {artist}" + (f" Â· {year}" if year else ""),
             "sources":   sources,
         }
     except Exception:
         return None
 
-# ─── ORIGINAL SEARCH HELPERS (name-based, kept for /search endpoint) ─────────
+# âââ ORIGINAL SEARCH HELPERS (name-based, kept for /search endpoint) âââââââââ
 
 async def search_tmdb(query: str, client: httpx.AsyncClient) -> dict | None:
     if not TMDB_API_KEY:
@@ -1316,7 +1317,7 @@ async def search_music(query: str, client: httpx.AsyncClient) -> dict | None:
         "category": "music",
         "image_url": None,
         "year":     year,
-        "overview": f"By {artist}" + (f" · {year}" if year else ""),
+        "overview": f"By {artist}" + (f" Â· {year}" if year else ""),
         "sources":  [],
     }
 
@@ -1377,7 +1378,7 @@ async def search_books(query: str, client: httpx.AsyncClient) -> dict | None:
         "sources":  sources,
     }
 
-# ─── AI OMNISCORE SUMMARY ─────────────────────────────────────────────────────
+# âââ AI OMNISCORE SUMMARY âââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 async def generate_ai_analysis(
     title: str,
@@ -1397,11 +1398,11 @@ async def generate_ai_analysis(
     import anthropic as _anthropic
 
     sources_text = "\n".join(
-        f"  • {s['name']} ({s['type']}): {s['score']}"
+        f"  â¢ {s['name']} ({s['type']}): {s['score']}"
         + (f"/{s['outOf']}" if s.get("outOf") else "")
-        + (f" — {s['reviews']} reviews" if s.get("reviews") else "")
+        + (f" â {s['reviews']} reviews" if s.get("reviews") else "")
         for s in sources
-    ) or "  • No third-party scores available yet."
+    ) or "  â¢ No third-party scores available yet."
 
     prompt = f"""You are Scrawl's AI analyst. Scrawl is a review aggregator that gives every product, movie, game, book, and album a single OmniScore out of 100.
 
@@ -1414,7 +1415,7 @@ Produce a short, punchy analysis for:
 Scores from across the web:
 {sources_text}
 
-Reply ONLY with valid JSON in this exact format — no extra text:
+Reply ONLY with valid JSON in this exact format â no extra text:
 {{
   "summary": "2-3 punchy sentences. Be specific. State what the consensus is and WHY. Mention standout praise or criticism.",
   "pros": ["pro 1 (max 8 words)", "pro 2", "pro 3", "pro 4"],
@@ -1437,7 +1438,7 @@ Reply ONLY with valid JSON in this exact format — no extra text:
 
     return {"summary": raw, "pros": [], "cons": []}
 
-# ─── FINALIZE RESULT (shared by /search and /score) ──────────────────────────
+# âââ FINALIZE RESULT (shared by /search and /score) ââââââââââââââââââââââââââ
 
 async def finalize(result: dict) -> dict:
     omniscore         = calculate_omniscore(result["sources"])
@@ -1456,7 +1457,7 @@ async def finalize(result: dict) -> dict:
     result["cons"]       = ai.get("cons", [])
     return result
 
-# ─── ENDPOINTS ───────────────────────────────────────────────────────────────
+# âââ ENDPOINTS âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @app.get("/candidates")
 async def get_candidates(
@@ -1464,7 +1465,7 @@ async def get_candidates(
     category: str = Query("auto", description="Filter: auto | game | movie | tv | music | book"),
 ):
     """
-    Fast candidate lookup — returns title, year, poster, category for top matches.
+    Fast candidate lookup â returns title, year, poster, category for top matches.
     No scraping, no AI. Used to let the user pick the right item before scoring.
     """
     async with httpx.AsyncClient(timeout=12.0) as client:
@@ -1608,7 +1609,9 @@ async def health():
     }
 
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 async def root():
-    return {"message": "Scrawl API is running. Use GET /candidates?q=zelda or GET /score?category=game&id=123"}
+    html_path = os.path.join(os.path.dirname(__file__), "frontend", "index.html")
+    with open(html_path) as f:
+        return f.read()
 
