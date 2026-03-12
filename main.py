@@ -1,5 +1,5 @@
 """
-Scrate API — Backend
+Scrawl API — Backend
 Universal review aggregator: movies, TV, games, music, books, products
 OmniScore = weighted AI-calculated master score across all sources
 """
@@ -32,7 +32,7 @@ _cache: dict = {}
 
 # ─── APP ─────────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="Scrate API", version="1.3.0")
+app = FastAPI(title="Scrawl API", version="1.3.0", description="scrawl it before you fall for it")
 
 app.add_middleware(
     CORSMiddleware,
@@ -366,7 +366,7 @@ async def candidates_books(query: str, client: httpx.AsyncClient) -> list:
 
 async def candidates_music(query: str, client: httpx.AsyncClient) -> list:
     mb_headers = {
-        "User-Agent": "Scrate/1.0 (scrate.io; contact@scrate.io)",
+        "User-Agent": "Scrawl/1.0 (scrawl.live; contact@scrawl.live)",
         "Accept": "application/json",
     }
     try:
@@ -437,7 +437,7 @@ async def score_opencritic(title: str, client: httpx.AsyncClient) -> dict | None
         sr = await client.get(
             "https://api.opencritic.com/api/game/search",
             params={"criteria": title},
-            headers={"User-Agent": "Scrate/1.3"},
+            headers={"User-Agent": "Scrawl/1.3"},
             timeout=10,
         )
         results = sr.json()
@@ -448,7 +448,7 @@ async def score_opencritic(title: str, client: httpx.AsyncClient) -> dict | None
             return None
         dr = await client.get(
             f"https://api.opencritic.com/api/game/{game_id}",
-            headers={"User-Agent": "Scrate/1.3"},
+            headers={"User-Agent": "Scrawl/1.3"},
             timeout=10,
         )
         detail = dr.json()
@@ -1149,7 +1149,7 @@ async def score_book_by_id(book_id: str, client: httpx.AsyncClient) -> dict | No
 
 async def score_music_by_id(mbid: str, client: httpx.AsyncClient) -> dict | None:
     mb_headers = {
-        "User-Agent": "Scrate/1.0 (scrate.io; contact@scrate.io)",
+        "User-Agent": "Scrawl/1.0 (scrawl.live; contact@scrawl.live)",
         "Accept": "application/json",
     }
     try:
@@ -1271,7 +1271,7 @@ async def search_rawg(query: str, client: httpx.AsyncClient) -> dict | None:
 
 async def search_music(query: str, client: httpx.AsyncClient) -> dict | None:
     mb_headers = {
-        "User-Agent": "Scrate/1.0 (scrate.io; contact@scrate.io)",
+        "User-Agent": "Scrawl/1.0 (scrawl.live; contact@scrawl.live)",
         "Accept": "application/json",
     }
 
@@ -1403,7 +1403,7 @@ async def generate_ai_analysis(
         for s in sources
     ) or "  • No third-party scores available yet."
 
-    prompt = f"""You are Scrate's AI analyst. Scrate is a review aggregator that gives every product, movie, game, book, and album a single OmniScore out of 100.
+    prompt = f"""You are Scrawl's AI analyst. Scrawl is a review aggregator that gives every product, movie, game, book, and album a single OmniScore out of 100.
 
 Produce a short, punchy analysis for:
   Title:      {title}
@@ -1591,7 +1591,7 @@ async def search(q: str = Query(..., min_length=2, description="Product / movie 
 async def health():
     return {
         "status":  "ok",
-        "service": "Scrate API",
+        "service": "Scrawl API",
         "version": "1.3.0",
         "apis": {
             "tmdb":        bool(TMDB_API_KEY),
@@ -1610,5 +1610,5 @@ async def health():
 
 @app.get("/")
 async def root():
-    return {"message": "Scrate API is running. Use GET /candidates?q=zelda or GET /score?category=game&id=123"}
+    return {"message": "Scrawl API is running. Use GET /candidates?q=zelda or GET /score?category=game&id=123"}
 
