@@ -676,16 +676,22 @@ async def score_allmusic(title: str, artist: str, client: httpx.AsyncClient) -> 
 
 
 async def score_ign(title: str, category: str, client: httpx.AsyncClient) -> dict | None:
-    """IGN review score (0–10).
+    """IGN review score (0-10).
+
     Strategy:
-      1. Try direct IGN game/movie page (ign.com/games/{slug}) — parse JSON-LD,
-         __NEXT_DATA__ embedded JSON, or ratingValue regex.
-      2. Fall back to IGN search page → follow review article link.
+    1. Try direct IGN game/movie page (ign.com/games/{slug}) - parse JSON-LD,
+       __NEXT_DATA__ embedded JSON, or ratingValue regex.
+    2. Fall back to IGN search page -> follow review article link.
     """
     try:
         ign_type = "games" if category == "game" else "movies" if category in ("movie", "tv") else None
         if not ign_type:
             return None
+
+        # Build slug from title
+        slug = re.sub(r'[^\w\s-]', '', title.lower())
+        slug = re.sub(r'[\s_]+', '-', slug)
+        slug = re.sub(r'-+', '-', slug).strip('-')
 
         def _extract_score(html: str) -> dict | None:
             """Try every known extraction method on an IGN page."""
@@ -693,32 +699,71 @@ async def score_ign(title: str, category: str, client: httpx.AsyncClient) -> dic
             soup = BeautifulSoup(html, "html.parser")
             for ld_tag in soup.find_all("script", type="application/ld+json"):
                 try:
-                    ld  = json.loads(ld_tag.string or "")
-                    rat = ld.get("reviewRating") or ld.get("aggregateRating") or {}
-                    val = rat.get("ratingValue")
-                    best = rat.get("bestRating", 10)
-                    if val:
-                        return build_source("IGN", "Expert", "&#128269;", "#ff5722", str(val), str(best))
+                    ld = json.loads(ld_tag.string or "")
+                    rat = ld.get("reviewRating") or ld.get("aggregateRating")
+                    if rat:
+                        val = rat.get("ratingValue")
+                        best = rat.get("bestRating", 10)
+                        if val:
+                            return build_source(
+                                "IGN", "Expert", "&#128269;", "#ff5722",
+                                str(val), str(best),
+                            )
                 except Exception:
                     continue
-            # 2. __NEXT_DATA__ (Next.js hydration blob)
+
+            # 2. __NEXT_DATA__ - targeted paths then BFS
             nd = soup.find("script", id="__NEXT_DATA__")
             if nd and nd.string:
                 try:
                     data = json.loads(nd.string)
-                    # Walk through nested dicts/lists looking for ratingValue
+
+                    def _deep_get(obj, *keys):
+                        for k in keys:
+                            if isinstance(obj, dict):
+                                obj = obj.get(k)
+                            else:
+                                return None
+                        return obj
+
+                    pp = _deep_get(data, "props", "pageProps")
+                    for path in [
+                        ("article", "contentScore", "score"),
+                        ("article", "scoreCard", "score"),
+                        ("review", "contentScore", "score"),
+                        ("review", "scoreCard", "score"),
+                        ("page", "contentScore", "score"),
+                        ("content", "contentScore", "score"),
+                    ]:
+                        val = _deep_get(pp, *path) if pp else None
+                        if val is not None:
+                            try:
+                                fval = float(str(val))
+                                if 0 < fval <= 10:
+                                    return build_source(
+                                        "IGN", "Expert", "&#128269;", "#ff5722",
+                                        str(fval), "10",
+                                    )
+                            except ValueError:
+                                pass
+
+                    # BFS fallback
                     stack = [data]
-                    while stack:
+                    visited = 0
+                    while stack and visited < 300:
                         node = stack.pop()
+                        visited += 1
                         if isinstance(node, dict):
-                            val = node.get("ratingValue") or node.get("score")
-                            if val and isinstance(val, (int, float, str)):
+                            val = node.get("ratingValue")
+                            if val:
                                 try:
                                     fval = float(str(val))
                                     if 0 < fval <= 10:
                                         best = node.get("bestRating", 10)
-                                        return build_source("IGN", "Expert", "&#128269;", "#ff5722",
-                                                            str(fval), str(best))
+                                        return build_source(
+                                            "IGN", "Expert", "&#128269;", "#ff5722",
+                                            str(fval), str(best),
+                                        )
                                 except ValueError:
                                     pass
                             stack.extend(node.values())
@@ -726,11 +771,12 @@ async def score_ign(title: str, category: str, client: httpx.AsyncClient) -> dic
                             stack.extend(node)
                 except Exception:
                     pass
-            # 3. Regex fallback on raw HTML
+
+            # 3. Regex fallback
             m = re.search(r'"ratingValue":\s*"?([\d.]+)"?', html)
             if m:
                 return build_source("IGN", "Expert", "&#128269;", "#ff5722", m.group(1), "10")
-            m2 = re.search(r'"score":\s*([\d.]+)', html)
+            m2 = re.search(r'"score":\s*([\d.]+)\s*[,}]', html)
             if m2:
                 try:
                     s = float(m2.group(1))
@@ -740,39 +786,42 @@ async def score_ign(title: str, category: str, client: httpx.AsyncClient) -> dic
                     pass
             return None
 
-        # ── Step 1: direct page URL ─────────────────────────────────────────(        slug = re.sub(r"[^a-z0-9\s-]", "", title.lower()).strip().replace(" ", "-")
-        slug = re.sub(r"-+", "-", slug)
+        # Step 1: direct page URL
         direct_url = f"https://www.ign.com/{ign_type}/{slug}"
-        for url in [direct_url]:
-            html = await cf_fetch(url, client)
-            if not html:
-                try:
-                    r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
-                    if r.status_code == 200:
-                        html = r.text
-                except Exception:
-                    pass
-            if html:
-                result = _extract_score(html)
-                if result:
-                    return result
+        html = await cf_fetch(direct_url, client)
+        if not html:
+            try:
+                r = await client.get(
+                    direct_url, headers=BROWSER_HEADERS,
+                    follow_redirects=True, timeout=12,
+                )
+                if r.status_code == 200:
+                    html = r.text
+            except Exception:
+                pass
+        if html:
+            result = _extract_score(html)
+            if result:
+                return result
 
-        # ── Step 2: search page → follow review article link ─────────────────
-        query      = title.replace(" ", "+")
+        # Step 2: IGN search -> follow review link
+        query = title.replace(" ", "+")
         search_url = f"https://www.ign.com/search?q={query}&type={ign_type}&filter=reviews"
         html = await cf_fetch(search_url, client)
         if not html:
             try:
-                r = await client.get(search_url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=12)
+                r = await client.get(
+                    search_url, headers=BROWSER_HEADERS,
+                    follow_redirects=True, timeout=12,
+                )
                 if r.status_code == 200:
                     html = r.text
             except Exception:
                 pass
         if html:
             soup = BeautifulSoup(html, "html.parser")
-            # IGN search results: look for review links
             link = soup.find("a", href=re.compile(
-                r"(ign\.com)?/(articles|reviews)/|"
+                r"(ign\.com)/(articles|reviews)/|"
                 r"ign\.com/(games|movies)/[^/]+/review"
             ))
             if link:
@@ -782,7 +831,10 @@ async def score_ign(title: str, category: str, client: httpx.AsyncClient) -> dic
                 html2 = await cf_fetch(review_url, client)
                 if not html2:
                     try:
-                        r2 = await client.get(review_url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=12)
+                        r2 = await client.get(
+                            review_url, headers=BROWSER_HEADERS,
+                            follow_redirects=True, timeout=12,
+                        )
                         if r2.status_code == 200:
                             html2 = r2.text
                     except Exception:
@@ -791,12 +843,99 @@ async def score_ign(title: str, category: str, client: httpx.AsyncClient) -> dic
                     result = _extract_score(html2)
                     if result:
                         return result
-        return None
+
     except Exception:
-        return None
+        pass
+    return None
 
 
-# ─── SCORE BY ID HELPERS (deep fetch) ────────────────────────────────────────
+async def score_gamespot(title: str, client: httpx.AsyncClient) -> dict | None:
+    """GameSpot review score (0-10)."""
+    try:
+        slug = re.sub(r'[^\w\s-]', '', title.lower())
+        slug = re.sub(r'[\s_]+', '-', slug)
+        slug = re.sub(r'-+', '-', slug).strip('-')
+
+        def _extract_gs(html: str) -> dict | None:
+            soup = BeautifulSoup(html, "html.parser")
+            for ld_tag in soup.find_all("script", type="application/ld+json"):
+                try:
+                    ld = json.loads(ld_tag.string or "")
+                    items = ld if isinstance(ld, list) else [ld]
+                    for item in items:
+                        rat = item.get("reviewRating") or item.get("aggregateRating")
+                        if rat:
+                            val = rat.get("ratingValue")
+                            best = rat.get("bestRating", 10)
+                            if val:
+                                return build_source(
+                                    "GameSpot", "Expert", "&#127918;", "#FF6B00",
+                                    str(val), str(best),
+                                )
+                except Exception:
+                    continue
+            m = re.search(r'"ratingValue":\s*"?([\d.]+)"?', html)
+            if m:
+                return build_source("GameSpot", "Expert", "&#127918;", "#FF6B00", m.group(1), "10")
+            return None
+
+        # Direct game page
+        url = f"https://www.gamespot.com/games/{slug}/"
+        html = await cf_fetch(url, client)
+        if not html:
+            try:
+                r = await client.get(
+                    url, headers=BROWSER_HEADERS,
+                    follow_redirects=True, timeout=12,
+                )
+                if r.status_code == 200:
+                    html = r.text
+            except Exception:
+                pass
+        if html:
+            result = _extract_gs(html)
+            if result:
+                return result
+
+        # Search fallback
+        query = title.replace(" ", "+")
+        search_url = f"https://www.gamespot.com/search/?q={query}&type=reviews"
+        html = await cf_fetch(search_url, client)
+        if not html:
+            try:
+                r = await client.get(
+                    search_url, headers=BROWSER_HEADERS,
+                    follow_redirects=True, timeout=12,
+                )
+                if r.status_code == 200:
+                    html = r.text
+            except Exception:
+                pass
+        if html:
+            soup = BeautifulSoup(html, "html.parser")
+            link = soup.find("a", href=re.compile(r"gamespot\.com/(articles|reviews)/"))
+            if link:
+                review_url = link["href"]
+                if not review_url.startswith("http"):
+                    review_url = "https://www.gamespot.com" + review_url
+                html2 = await cf_fetch(review_url, client)
+                if not html2:
+                    try:
+                        r2 = await client.get(
+                            review_url, headers=BROWSER_HEADERS,
+                            follow_redirects=True, timeout=12,
+                        )
+                        if r2.status_code == 200:
+                            html2 = r2.text
+                    except Exception:
+                        pass
+                if html2:
+                    return _extract_gs(html2)
+
+    except Exception:
+        pass
+    return None
+
 
 async def score_rawg_by_id(game_id: str, client: httpx.AsyncClient) -> dict | None:
     if not RAWG_API_KEY:
@@ -852,6 +991,7 @@ async def score_rawg_by_id(game_id: str, client: httpx.AsyncClient) -> dict | No
             score_opencritic(game_name, client),
             score_steam(game_id, client),
             score_ign(game_name, "game", client),
+            score_gamespot(game_name, client),
             return_exceptions=True,
         )
         for s in extra_game:
