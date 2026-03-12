@@ -1041,12 +1041,7 @@ async def score_music_by_id(mbid: str, client: httpx.AsyncClient) -> dict | None
 
         sources = []
         try:
-            adm_url = f"https://www.anydecentmusic.com/search/"""
-Scrate API — Backend
-Universal review aggregator: movies, TV, games, music, books, products
-OmniScore = weighted AI-calculated master score across all sources
-"""
-
+            adm_url = f"https://www.anydecentmusic.com/search/?q={title.replace(' ', '+')}"
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
