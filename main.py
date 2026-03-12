@@ -13,6 +13,7 @@ import re
 import asyncio
 import hashlib
 from datetime import datetime, timedelta
+import unicodedata
 from bs4 import BeautifulSoup
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
@@ -275,7 +276,6 @@ async def candidates_rawg(query: str, client: httpx.AsyncClient) -> list:
             params={
                 "key": RAWG_API_KEY,
                 "search": query,
-                "search_exact": "true",
                 "page_size": 10,
             },
         )
@@ -1243,15 +1243,29 @@ async def search_rawg(query: str, client: httpx.AsyncClient) -> dict | None:
     if not RAWG_API_KEY:
         return None
 
+    def _norm(s: str) -> list:
+        s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+        return re.sub(r"[^\w\s]", " ", s.lower()).split()
+
     r = await client.get(
         "https://api.rawg.io/api/games",
-        params={"key": RAWG_API_KEY, "search": query, "search_exact": "true", "page_size": 1},
+        params={"key": RAWG_API_KEY, "search": query, "page_size": 8},
     )
     results = r.json().get("results", [])
     if not results:
         return None
 
-    game_id = str(results[0]["id"])
+    q_tokens = set(_norm(query))
+    best_idx, best_score = 0, -1.0
+    for i, game in enumerate(results):
+        t_tokens = set(_norm(game.get("name", "")))
+        if not t_tokens:
+            continue
+        score = len(q_tokens & t_tokens) / max(len(q_tokens), len(t_tokens))
+        if score > best_score:
+            best_score, best_idx = score, i
+
+    game_id = str(results[best_idx]["id"])
     return await score_rawg_by_id(game_id, client)
 
 
