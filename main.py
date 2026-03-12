@@ -17,9 +17,11 @@ from bs4 import BeautifulSoup
 
 # âââ CONFIG ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-TMDB_API_KEY      = os.getenv("TMDB_API_KEY", "")
-RAWG_API_KEY      = os.getenv("RAWG_API_KEY", "")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+TMDB_API_KEY          = os.getenv("TMDB_API_KEY", "")
+RAWG_API_KEY          = os.getenv("RAWG_API_KEY", "")
+ANTHROPIC_API_KEY     = os.getenv("ANTHROPIC_API_KEY", "")
+CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
+CLOUDFLARE_API_TOKEN  = os.getenv("CLOUDFLARE_API_TOKEN", "")
 
 # How long to keep cached results before refreshing (hours)
 CACHE_TTL_HOURS = 72
@@ -29,7 +31,7 @@ _cache: dict = {}
 
 # âââ APP âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-app = FastAPI(title="Scrate API", version="1.2.0")
+app = FastAPI(title="Scrate API", version="1.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -305,7 +307,7 @@ async def candidates_tmdb(query: str, client: httpx.AsyncClient) -> list:
             params={"api_key": TMDB_API_KEY, "query": query, "language": "en-US", "page": 1},
         )
         results = []
-        for item in r.json().get("results", []):
+        for item ir r.json().get("results", []):
             if item.get("media_type") not in ("movie", "tv"):
                 continue
             title  = item.get("title") or item.get("name", "")
@@ -391,6 +393,339 @@ async def candidates_music(query: str, client: httpx.AsyncClient) -> list:
     except Exception:
         return []
 
+# âââ CLOUDFLARE BROWSER RENDERING ââââââââââââââââââââââââââââââââââââââââââââ
+
+async def cf_fetch(url: str, client: httpx.AsyncClient) -> str | None:
+    """Fetch a JS-rendered page via Cloudflare Browser Rendering /content API."""
+    if not CLOUDFLARE_ACCOUNT_ID or not CLOUDFLARE_API_TOKEN:
+        return None
+    try:
+        r = await client.post(
+            f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/browser-rendering/content",
+            headers={
+                "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "url": url,
+                "rejectResourceTypes": ["image", "stylesheet", "font", "media"],
+            },
+            timeout=35,
+        )
+        if r.status_code == 200:
+            # API may return JSON-wrapped or raw HTML
+            ct = r.headers.get("content-type", "")
+            if "json" in ct:
+                data = r.json()
+                return (
+                    data.get("result", {}).get("content")
+                    or data.get("result")
+                    or data.get("content")
+                    or r.text
+                )
+            return r.text
+    except Exception:
+        pass
+    return None
+
+
+# âââ NEW SCRAPERS (v1.3.0) ââââââââââââââââââââââââââââââââââââââââââââââââââââ
+
+async def score_opencritic(title: str, client: httpx.AsyncClient) -> dict | None:
+    """OpenCritic public API â no key required."""
+    try:
+        sr = await client.get(
+            "https://api.opencritic.com/api/game/search",
+            params={"criteria": title},
+            headers={"User-Agent": "Scrate/1.3"},
+            timeout=10,
+        )
+        results = sr.json()
+        if not results:
+            return None
+        game_id = results[0].get("id")
+        if not game_id:
+            return None
+        dr = await client.get(
+            f"https://api.opencritic.com/api/game/{game_id}",
+            headers={"User-Agent": "Scrate/1.3"},
+            timeout=10,
+        )
+        detail = dr.json()
+        score       = detail.get("topCriticScore", -1)
+        num_reviews = detail.get("numReviews", 0)
+        if score is None or score < 0:
+            return None
+        return build_source(
+            "OpenCritic", "Expert", "&#128270;", "#7b1fa2",
+            str(round(score)), "100",
+            reviews=f"{num_reviews}" if num_reviews else None,
+        )
+    except Exception:
+        return None
+
+
+async def score_steam(rawg_id: str, client: httpx.AsyncClient) -> dict | None:
+    """Steam user review score, fetched via RAWG stores endpoint then Steam API."""
+    if not RAWG_API_KEY:
+        return None
+    try:
+        sr = await client.get(
+            f"https://api.rawg.io/api/games/{rawg_id}/stores",
+            params={"key": RAWG_API_KEY},
+            timeout=10,
+        )
+        steam_url = None
+        for store in sr.json().get("results", []):
+            u = store.get("url", "")
+            if "store.steampowered.com" in u:
+                steam_url = u
+                break
+        if not steam_url:
+            return None
+        m = re.search(r"/app/(\d+)", steam_url)
+        if not m:
+            return None
+        app_id = m.group(1)
+        rr = await client.get(
+            f"https://store.steampowered.com/appreviews/{app_id}",
+            params={"json": "1", "language": "all", "num_per_page": "0"},
+            headers=BROWSER_HEADERS,
+            timeout=10,
+        )
+        qs       = rr.json().get("query_summary", {})
+        total    = qs.get("total_reviews", 0)
+        positive = qs.get("total_positive", 0)
+        if total == 0:
+            return None
+        score = round((positive / total) * 100)
+        return build_source(
+            "Steam", "Users", "&#127918;", "#1b2838",
+            f"{score}%", None,
+            reviews=f"{total:,}",
+        )
+    except Exception:
+        return None
+
+
+async def score_rogerebert(title: str, year: str, client: httpx.AsyncClient) -> dict | None:
+    """Roger Ebert / RogerEbert.com â JSON-LD star rating (0â4)."""
+    try:
+        slug = re.sub(r"[^a-z0-9\s-]", "", title.lower()).strip().replace(" ", "-")
+        urls = [f"https://www.rogerebert.com/reviews/{slug}-{year}" if year else None,
+                f"https://www.rogerebert.com/reviews/{slug}"]
+        for url in urls:
+            if not url:
+                continue
+            try:
+                r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+                if r.status_code != 200:
+                    continue
+                soup = BeautifulSoup(r.text, "html.parser")
+                for ld_tag in soup.find_all("script", type="application/ld+json"):
+                    try:
+                        ld  = json.loads(ld_tag.string)
+                        rat = ld.get("reviewRating") or ld.get("aggregateRating") or {}
+                        val  = rat.get("ratingValue")
+                        best = rat.get("bestRating", 4)
+                        if val is not None:
+                            return build_source(
+                                "Roger Ebert", "Expert", "&#127902;", "#cc0000",
+                                str(val), str(best),
+                            )
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        return None
+    except Exception:
+        return None
+
+
+async def score_letterboxd(title: str, year: str, client: httpx.AsyncClient) -> dict | None:
+    """Letterboxd average user rating (0â5 stars)."""
+    try:
+        slug = re.sub(r"[^a-z0-9\s-]", "", title.lower()).strip().replace(" ", "-")
+        url  = f"https://letterboxd.com/film/{slug}/"
+        html = await cf_fetch(url, client)
+        if not html:
+            r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+            if r.status_code != 200:
+                return None
+            html = r.text
+        soup = BeautifulSoup(html, "html.parser")
+        # Prefer JSON-LD aggregateRating
+        for ld_tag in soup.find_all("script", type="application/ld+json"):
+            try:
+                ld    = json.loads(ld_tag.string)
+                rat   = ld.get("aggregateRating", {})
+                val   = rat.get("ratingValue")
+                count = rat.get("ratingCount")
+                if val:
+                    return build_source(
+                        "Letterboxd", "Users", "&#127909;", "#00c030",
+                        str(val), "5",
+                        reviews=f"{int(count):,}" if count else None,
+                    )
+            except Exception:
+                continue
+        # Fallback: twitter card meta
+        meta = soup.find("meta", attrs={"name": "twitter:data2"})
+        if meta:
+            m = re.search(r"([\d.]+)\s+out of\s+([\d.]+)", meta.get("content", ""))
+            if m:
+                return build_source(
+                    "Letterboxd", "Users", "&#127909;", "#00c030",
+                    m.group(1), m.group(2),
+                )
+        return None
+    except Exception:
+        return None
+
+
+async def score_pitchfork(title: str, artist: str, client: httpx.AsyncClient) -> dict | None:
+    """Pitchfork album review score (0â10)."""
+    try:
+        query = f"{title} {artist}".strip().replace(" ", "+")
+        search_url = f"https://pitchfork.com/search/?query={query}&types=reviews"
+        html = await cf_fetch(search_url, client)
+        if not html:
+            r = await client.get(search_url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+            if r.status_code != 200:
+                return None
+            html = r.text
+        soup = BeautifulSoup(html, "html.parser")
+        link = soup.find("a", href=re.compile(r"/reviews/albums/"))
+        if not link:
+            return None
+        review_url = "https://pitchfork.com" + link["href"]
+        html2 = await cf_fetch(review_url, client)
+        if not html2:
+            r2 = await client.get(review_url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+            if r2.status_code != 200:
+                return None
+            html2 = r2.text
+        soup2 = BeautifulSoup(html2, "html.parser")
+        # Score lives in a <p> or <span> with class containing "rating" or "score"
+        for cls in [re.compile(r"Rating-"), re.compile(r"score"), re.compile(r"rating")]:
+            el = soup2.find(class_=cls)
+            if el:
+                m = re.search(r"(\d+\.?\d*)", el.get_text())
+                if m:
+                    return build_source(
+                        "Pitchfork", "Expert", "&#127930;", "#ee3322",
+                        m.group(1), "10",
+                    )
+        # JSON-LD fallback
+        for ld_tag in soup2.find_all("script", type="application/ld+json"):
+            try:
+                ld  = json.loads(ld_tag.string)
+                rat = ld.get("reviewRating") or ld.get("aggregateRating") or {}
+                val = rat.get("ratingValue")
+                if val:
+                    return build_source("Pitchfork", "Expert", "&#127930;", "#ee3322", str(val), "10")
+            except Exception:
+                continue
+        return None
+    except Exception:
+        return None
+
+
+async def score_allmusic(title: str, artist: str, client: httpx.AsyncClient) -> dict | None:
+    """AllMusic editor rating (out of 10, displayed as stars)."""
+    try:
+        query = f"{title} {artist}".strip().replace(" ", "%20")
+        search_url = f"https://www.allmusic.com/search/albums/{query}"
+        html = await cf_fetch(search_url, client)
+        if not html:
+            r = await client.get(search_url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+            if r.status_code != 200:
+                return None
+            html = r.text
+        soup = BeautifulSoup(html, "html.parser")
+        link = soup.find("a", href=re.compile(r"/album/"))
+        if not link:
+            return None
+        album_url = link["href"]
+        if not album_url.startswith("http"):
+            album_url = "https://www.allmusic.com" + album_url
+        html2 = await cf_fetch(album_url, client)
+        if not html2:
+            r2 = await client.get(album_url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+            if r2.status_code != 200:
+                return None
+            html2 = r2.text
+        soup2 = BeautifulSoup(html2, "html.parser")
+        # AllMusic editor rating: div.allmusic-rating or span with aria-label like "4.5 out of 5"
+        for el in soup2.find_all(True, attrs={"aria-label": re.compile(r"out of")}):
+            m = re.search(r"([\d.]+)\s+out of\s+([\d.]+)", el.get("aria-label", ""))
+            if m:
+                return build_source(
+                    "AllMusic", "Expert", "&#127925;", "#016BAE",
+                    m.group(1), m.group(2),
+                )
+        # Fallback: star count from class name
+        star_el = soup2.find(class_=re.compile(r"allmusic-rating|editor-rating"))
+        if star_el:
+            m = re.search(r"(\d+\.?\d*)", star_el.get_text())
+            if m:
+                return build_source("AllMusic", "Expert", "&#127925;", "#016BAE", m.group(1), "5")
+        return None
+    except Exception:
+        return None
+
+
+async def score_ign(title: str, category: str, client: httpx.AsyncClient) -> dict | None:
+    """IGN review score (0â10) via Cloudflare-rendered search."""
+    try:
+        ign_type = "games" if category == "game" else "movies" if category in ("movie", "tv") else None
+        if not ign_type:
+            return None
+        query      = title.replace(" ", "+")
+        search_url = f"https://www.ign.com/search?q={query}&type={ign_type}"
+        html = await cf_fetch(search_url, client)
+        if not html:
+            r = await client.get(search_url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=12)
+            if r.status_code != 200:
+                return None
+            html = r.text
+        soup = BeautifulSoup(html, "html.parser")
+        # Look for a review link
+        link = soup.find("a", href=re.compile(r"ign\.com/articles/|ign\.com/games/.*?/review|ign\.com/movies/.*?/review"))
+        if not link:
+            # Try any article link that might be a review
+            link = soup.find("a", href=re.compile(r"/articles/"))
+        if not link:
+            return None
+        review_url = link["href"]
+        if not review_url.startswith("http"):
+            review_url = "https://www.ign.com" + review_url
+        html2 = await cf_fetch(review_url, client)
+        if not html2:
+            r2 = await client.get(review_url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=12)
+            if r2.status_code != 200:
+                return None
+            html2 = r2.text
+        # JSON-LD has reviewRating
+        for ld_tag in BeautifulSoup(html2, "html.parser").find_all("script", type="application/ld+json"):
+            try:
+                ld  = json.loads(ld_tag.string)
+                rat = ld.get("reviewRating") or ld.get("aggregateRating") or {}
+                val  = rat.get("ratingValue")
+                best = rat.get("bestRating", 10)
+                if val:
+                    return build_source("IGN", "Expert", "&#128269;", "#ff5722", str(val), str(best))
+            except Exception:
+                continue
+        # Regex fallback
+        m = re.search(r'"ratingValue":\s*"?([\d.]+)"?', html2)
+        if m:
+            return build_source("IGN", "Expert", "&#128269;", "#ff5722", m.group(1), "10")
+        return None
+    except Exception:
+        return None
+
+
 # âââ SCORE BY ID HELPERS (deep fetch) ââââââââââââââââââââââââââââââââââââââââ
 
 async def score_rawg_by_id(game_id: str, client: httpx.AsyncClient) -> dict | None:
@@ -442,8 +777,19 @@ async def score_rawg_by_id(game_id: str, client: httpx.AsyncClient) -> dict | No
         except Exception:
             pass
 
+        game_name = detail.get("name", "")
+        extra_game = await asyncio.gather(
+            score_opencritic(game_name, client),
+            score_steam(game_id, client),
+            score_ign(game_name, "game", client),
+            return_exceptions=True,
+        )
+        for s in extra_game:
+            if s and not isinstance(s, Exception):
+                sources.append(s)
+
         return {
-            "title":     detail.get("name", ""),
+            "title":     game_name,
             "subtitle":  ", ".join(genres) + (" Â· " + ", ".join(platforms) if platforms else ""),
             "category":  "game",
             "image_url": image,
@@ -490,6 +836,9 @@ async def score_tmdb_by_id(item_id: str, media_type: str, client: httpx.AsyncCli
             scrape_rt_movie(title, client),
             scrape_metacritic_movie(title, year, client),
             scrape_imdb(title, year, client),
+            score_rogerebert(title, year, client),
+            score_letterboxd(title, year, client),
+            score_ign(title, category, client),
             return_exceptions=True,
         )
         for s in extra:
@@ -636,6 +985,15 @@ async def score_music_by_id(mbid: str, client: httpx.AsyncClient) -> dict | None
                         ))
         except Exception:
             pass
+
+        extra_music = await asyncio.gather(
+            score_pitchfork(title, artist, client),
+            score_allmusic(title, artist, client),
+            return_exceptions=True,
+        )
+        for s in extra_music:
+            if s and not isinstance(s, Exception):
+                sources.append(s)
 
         return {
             "title":     title,
@@ -1010,11 +1368,18 @@ async def health():
     return {
         "status":  "ok",
         "service": "Scrate API",
-        "version": "1.2.0",
+        "version": "1.3.0",
         "apis": {
-            "tmdb":      bool(TMDB_API_KEY),
-            "rawg":      bool(RAWG_API_KEY),
-            "anthropic": bool(ANTHROPIC_API_KEY),
+            "tmdb":        bool(TMDB_API_KEY),
+            "rawg":        bool(RAWG_API_KEY),
+            "anthropic":   bool(ANTHROPIC_API_KEY),
+            "cloudflare":  bool(CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN),
+        },
+        "sources": {
+            "games":  ["RAWG", "Metacritic", "OpenCritic", "Steam", "IGN"],
+            "movies": ["TMDB", "Rotten Tomatoes", "Metacritic", "IMDb", "Roger Ebert", "Letterboxd", "IGN"],
+            "music":  ["MusicBrainz", "AnyDecentMusic", "Pitchfork", "AllMusic"],
+            "books":  ["Open Library", "Goodreads"],
         },
     }
 
@@ -1022,3 +1387,4 @@ async def health():
 @app.get("/")
 async def root():
     return {"message": "Scrate API is running. Use GET /candidates?q=zelda or GET /score?category=game&id=123"}
+
