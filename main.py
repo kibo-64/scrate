@@ -863,7 +863,7 @@ async def score_rawg_by_id(game_id: str, client: httpx.AsyncClient) -> dict | No
             "subtitle":  ", ".join(genres) + (" · " + ", ".join(platforms) if platforms else ""),
             "category":  "game",
             "image_url": image,
-            "year":      (detail.get("released") op "")[:4],
+            "year":      (detail.get("released") or "")[:4],
             "overview":  description,
             "sources":   sources,
         }
@@ -1901,7 +1901,7 @@ async def score_rawg_by_id(game_id: str, client: httpx.AsyncClient) -> dict | No
             "subtitle":  ", ".join(genres) + (" · " + ", ".join(platforms) if platforms else ""),
             "category":  "game",
             "image_url": image,
-            "year":      (detail.get("released") op "")[:4],
+            "year":      (detail.get("released") or "")[:4],
             "overview":  description,
             "sources":   sources,
         }
