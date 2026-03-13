@@ -424,12 +424,12 @@ async def cf_fetch(url: str, client: httpx.AsyncClient) -> str | None:
             ct = r.headers.get("content-type", "")
             if "json" in ct:
                 data = r.json()
-                return (
-                    data.get("result", {}).get("content")
-                    or data.get("result")
-                    or data.get("content")
-                    or r.text
-                )
+                res = data.get("result")
+                if isinstance(res, dict):
+                    return res.get("content") or r.text
+                elif isinstance(res, str):
+                    return res
+                return data.get("content") or r.text
             return r.text
     except Exception:
         pass
@@ -580,12 +580,13 @@ async def score_rogerebert(title: str, year: str, client: httpx.AsyncClient) -> 
                         ct = cfr.headers.get("content-type", "")
                         if "json" in ct:
                             cfd = cfr.json()
-                            ebert_html = (
-                                cfd.get("result", {}).get("content")
-                                or cfd.get("result")
-                                or cfd.get("content")
-                                or cfr.text
-                            )
+                            res = cfd.get("result")
+                            if isinstance(res, dict):
+                                ebert_html = res.get("content") or cfr.text
+                            elif isinstance(res, str):
+                                ebert_html = res
+                            else:
+                                ebert_html = cfd.get("content") or cfr.text
                         else:
                             ebert_html = cfr.text
                 except Exception as e:
