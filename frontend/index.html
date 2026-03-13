@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Scrawl â OmniScore everything.</title>
+  <title>Scrawl — OmniScore everything.</title>
   <meta name="description" content="Search any product, movie, game, album, or book. Scrawl aggregates every review and gives you one OmniScore." />
   <style>
     :root {
@@ -19,27 +19,26 @@
       --text:     #e8e8f2;
       --muted:    #7878a0;
       --card:     #1c1c25;
-      --nav-bg:   rgba(12,12,17,0.9);
-      --shadow:   rgba(0,0,0,0.5);
-      --hero-bg-gradient: none;
-    }
-    [data-theme="light"] {
-      --bg:       #f5f5fa;
-      --surface:  #ffffff;
-      --surface2: #ededf5;
-      --border:   #d8d8e8;
-      --accent:   #6355e8;
-      --accent2:  #7c6fff;
-      --green:    #16a34a;
-      --yellow:   #d97706;
-      --red:      #dc2626;
-      --text:     #1a1a2e;
-      --muted:    #6b6b8a;
-      --card:     #ffffff;
-      --nav-bg:   rgba(245,245,250,0.92);
-      --shadow:   rgba(0,0,0,0.12);
-      --hero-bg-gradient: none;
-    }
+    --nav-bg:   rgba(12,12,17,0.9);
+    --shadow:   rgba(0,0,0,0.5);
+  }
+
+  [data-theme="light"] {
+    --bg:       #f5f5fa;
+    --surface:  #ffffff;
+    --surface2: #ededf5;
+    --border:   #d8d8e8;
+    --accent:   #6355e8;
+    --accent2:  #7c6fff;
+    --green:    #16a34a;
+    --yellow:   #d97706;
+    --red:      #dc2626;
+    --text:     #1a1a2e;
+    --muted:    #6b6b8a;
+    --card:     #ffffff;
+    --nav-bg:   rgba(245,245,250,0.92);
+    --shadow:   rgba(0,0,0,0.12);
+  }
     * { margin:0; padding:0; box-sizing:border-box; }
     html { scroll-behavior: smooth; }
     body {
@@ -50,7 +49,7 @@
       transition: background .25s, color .25s;
     }
 
-    /* ââ NAV ââ */
+    /* ── NAV ── */
     nav {
       display: flex;
       align-items: center;
@@ -76,7 +75,7 @@
     }
     .nav-links a:hover { color: var(--text); }
 
-    /* ââ NAV SEARCH ââ */
+    /* ── NAV SEARCH ── */
     .nav-search {
       display: none; flex: 1; max-width: 380px;
     }
@@ -107,7 +106,7 @@
     }
     .nav-search-btn:hover { opacity: .88; }
 
-    /* ââ HERO ââ */
+    /* ── HERO ── */
     .hero {
       text-align: center;
       padding: 88px 20px 64px;
@@ -135,7 +134,7 @@
       max-width: 460px; margin: 0 auto 44px; line-height: 1.65;
     }
 
-    /* ââ SEARCH ââ */
+    /* ── SEARCH ── */
     .search-wrap { max-width: 680px; margin: 0 auto; }
     .search-box {
       display: flex; align-items: center;
@@ -197,7 +196,7 @@
       border-color: var(--accent); color: var(--accent2);
     }
 
-    /* ââ LOADING ââ */
+    /* ── LOADING ── */
     #loading {
       display: none; text-align: center; padding: 80px 20px;
     }
@@ -222,14 +221,14 @@
     .load-step.done   { color: var(--green); }
     .step-dot { width:6px; height:6px; border-radius:50%; background:currentColor; }
 
-    /* ââ ERROR ââ */
+    /* ── ERROR ── */
     #error {
       display:none; text-align:center; padding:60px 20px;
       color: var(--red); font-size:.95rem;
     }
     #error.show { display:block; }
 
-    /* ââ PICKER ââ */
+    /* ── PICKER ── */
     #picker {
       display: none; max-width: 980px;
       margin: 0 auto; padding: 0 20px 80px;
@@ -327,7 +326,7 @@
       font-size: .62rem; opacity: .6; font-weight: 400;
     }
 
-    /* ââ RESULTS ââ */
+    /* ── RESULTS ── */
     #results {
       display: none; max-width: 980px;
       margin: 0 auto; padding: 0 20px 100px;
@@ -349,7 +348,7 @@
     }
     .back-btn:hover { border-color:var(--accent); color:var(--accent2); }
 
-    /* ââ HERO PRODUCT CARD ââ */
+    /* ── HERO PRODUCT CARD ── */
     .product-hero {
       background: linear-gradient(135deg, rgba(124,111,255,0.1), rgba(192,132,252,0.05));
       border: 1.5px solid rgba(124,111,255,0.25);
@@ -439,7 +438,7 @@
     }
     .ai-summary { color:var(--muted); font-size:.88rem; line-height:1.7; }
 
-    /* ââ PRO/CON ââ */
+    /* ── PRO/CON ── */
     .pro-con {
       display:grid; grid-template-columns:1fr 1fr; gap:12px;
       margin-bottom:22px;
@@ -455,10 +454,10 @@
       list-style:none; font-size:.84rem; color:var(--muted);
       padding:3px 0; display:flex; align-items:flex-start; gap:7px;
     }
-    .pro-box li::before { content:'â'; color:var(--green); font-weight:800; flex-shrink:0; }
-    .con-box li::before { content:'â'; color:var(--red);   font-weight:800; flex-shrink:0; }
+    .pro-box li::before { content:'✓'; color:var(--green); font-weight:800; flex-shrink:0; }
+    .con-box li::before { content:'✗'; color:var(--red);   font-weight:800; flex-shrink:0; }
 
-    /* ââ SOURCES GRID ââ */
+    /* ── SOURCES GRID ── */
     .section-label {
       font-size:.75rem; text-transform:uppercase; letter-spacing:.08em;
       color:var(--muted); font-weight:700; margin-bottom:12px;
@@ -520,19 +519,19 @@
     .s-ok     { background: var(--yellow); }
     .s-poor   { background: var(--red); }
 
-    /* ââ ANIMATIONS ââ */
+    /* ── ANIMATIONS ── */
     .fade-in { animation: fi .45s ease forwards; opacity:0; }
     @keyframes fi { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:none} }
     .d1{animation-delay:.05s} .d2{animation-delay:.12s} .d3{animation-delay:.2s} .d4{animation-delay:.28s}
 
-    /* ââ FOOTER ââ */
+    /* ── FOOTER ── */
     footer {
       border-top:1px solid var(--border);
       text-align:center; padding:28px;
       color:var(--muted); font-size:.78rem;
     }
 
-    /* ââ RESPONSIVE ââ */
+    /* ── RESPONSIVE ── */
     @media(max-width:700px){
       nav { padding:14px 18px; }
       .hero { padding:60px 16px 40px; }
@@ -543,10 +542,37 @@
       .picker-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
     }
   
-[data-theme="light"] .product-hero{background:linear-gradient(135deg,#f0eeff 0%,#e8e4ff 100%);border-color:#d8d8e8;}
-[data-theme="light"] .src-card,[data-theme="light"] .pick-card,[data-theme="light"] .pro-box,[data-theme="light"] .con-box{box-shadow:0 1px 4px rgba(0,0,0,0.06);}
-[data-theme="light"] .hero-badge{background:rgba(99,85,232,0.08);}
-[data-theme="light"] .search-box,[data-theme="light"] .nav-search-box{box-shadow:0 2px 8px rgba(0,0,0,0.07);}
+    /* ── theme switch ── */
+    .theme-switch {
+      width: 52px; height: 28px; border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      border: 1.5px solid var(--border);
+      padding: 3px; cursor: pointer;
+      display: flex; align-items: center;
+      transition: background .3s, border-color .3s;
+      flex-shrink: 0;
+    }
+    .theme-switch:hover { border-color: var(--accent); }
+    .switch-thumb {
+      width: 20px; height: 20px; border-radius: 50%;
+      background: var(--muted);
+      transition: transform .35s cubic-bezier(.34,1.56,.64,1), background .3s;
+      flex-shrink: 0;
+    }
+    [data-theme="light"] .theme-switch {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    [data-theme="light"] .switch-thumb {
+      transform: translateX(24px);
+      background: #fff;
+    }
+
+    [data-theme="light"] .product-hero { background: linear-gradient(135deg,#f0eeff 0%,#e8e4ff 100%); border-color: #d8d8e8; }
+    [data-theme="light"] .src-card, [data-theme="light"] .pick-card,
+    [data-theme="light"] .pro-box, [data-theme="light"] .con-box { box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+    [data-theme="light"] .hero-badge { background: rgba(99,85,232,0.08); }
+    [data-theme="light"] .search-box, [data-theme="light"] .nav-search-box { box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
 </style>
 </head>
 <body>
@@ -559,7 +585,7 @@
       <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="#7878a0" stroke-width="2.2">
         <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
       </svg>
-      <input id="navQ" type="text" placeholder="Search againâ¦" onkeydown="if(event.key==='Enter')goNav()" />
+      <input id="navQ" type="text" placeholder="Search again…" onkeydown="if(event.key==='Enter')goNav()" />
       <button class="nav-search-btn" onclick="goNav()">Scrawl it</button>
     </div>
   </div>
@@ -568,39 +594,38 @@
     <a href="#">Categories</a>
     <a href="#">About</a>
   </div>
-  <button class="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark mode" aria-label="Toggle theme">
-    <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-    <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+  <button class="theme-switch" onclick="toggleTheme()" aria-label="Toggle theme" title="Switch light/dark mode">
+    <span class="switch-thumb"></span>
   </button>
 </nav>
 
 <!-- HERO -->
 <div class="hero" id="hero">
-  <div class="hero-badge">â¦ OmniScore â Every review. One truth.</div>
+  <div class="hero-badge">✦ OmniScore — Every review. One truth.</div>
   <h1>Scrawl it before<br/><span class="grad">you fall for it.</span></h1>
-  <p>Movies, games, albums, books, products â search anything and get one definitive OmniScore pulled from every major review source on the web.</p>
+  <p>Movies, games, albums, books, products — search anything and get one definitive OmniScore pulled from every major review source on the web.</p>
 
   <div class="search-wrap">
     <div class="search-box">
       <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="#7878a0" stroke-width="2.2">
         <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
       </svg>
-      <input id="q" type="text" placeholder="Search a movie, game, album, bookâ¦" onkeydown="if(event.key==='Enter')go()" />
+      <input id="q" type="text" placeholder="Search a movie, game, album, book…" onkeydown="if(event.key==='Enter')go()" />
       <button class="search-btn" onclick="go()">Scrawl it</button>
     </div>
 
     <div class="cat-pills" id="catPills">
-      <span class="cat-pill" data-cat="movie"  onclick="setCat(this,'movie')">ð¬ Movies</span>
-      <span class="cat-pill" data-cat="game"   onclick="setCat(this,'game')">ð® Games</span>
-      <span class="cat-pill" data-cat="music"  onclick="setCat(this,'music')">ðµ Music</span>
-      <span class="cat-pill" data-cat="book"   onclick="setCat(this,'book')">ð Books</span>
-      <span class="cat-pill" data-cat="tv"     onclick="setCat(this,'tv')">ðº TV</span>
+      <span class="cat-pill" data-cat="movie"  onclick="setCat(this,'movie')">🎬 Movies</span>
+      <span class="cat-pill" data-cat="game"   onclick="setCat(this,'game')">🎮 Games</span>
+      <span class="cat-pill" data-cat="music"  onclick="setCat(this,'music')">🎵 Music</span>
+      <span class="cat-pill" data-cat="book"   onclick="setCat(this,'book')">📚 Books</span>
+      <span class="cat-pill" data-cat="tv"     onclick="setCat(this,'tv')">📺 TV</span>
     </div>
 
     <div class="suggestions" style="margin-top:10px;">
       <span class="chip" onclick="setQ('Oppenheimer')">Oppenheimer</span>
       <span class="chip" onclick="setQ('Elden Ring')">Elden Ring</span>
-      <span class="chip" onclick="setQ('Taylor Swift Midnights')">Midnights â Taylor Swift</span>
+      <span class="chip" onclick="setQ('Taylor Swift Midnights')">Midnights – Taylor Swift</span>
       <span class="chip" onclick="setQ('Dune')">Dune</span>
       <span class="chip" onclick="setQ('The Bear')">The Bear</span>
     </div>
@@ -610,7 +635,7 @@
 <!-- LOADING -->
 <div id="loading">
   <div class="spinner"></div>
-  <div class="load-text" id="loadText">Finding matchesâ¦</div>
+  <div class="load-text" id="loadText">Finding matches…</div>
   <div class="load-steps" id="loadSteps">
     <div class="load-step" id="s1"><div class="step-dot"></div>Detecting category</div>
     <div class="load-step" id="s2"><div class="step-dot"></div>Fetching scores from all sources</div>
@@ -628,33 +653,33 @@
 <!-- RESULTS -->
 <div id="results"></div>
 
-<footer>scrawl.live &nbsp;Â·&nbsp; Every review. One score. &nbsp;Â·&nbsp; &copy; 2026</footer>
+<footer>scrawl.live &nbsp;·&nbsp; Every review. One score. &nbsp;·&nbsp; &copy; 2026</footer>
 
 <script>
-  // Theme init (runs before paint to avoid flash)
+  // Theme init — runs before paint to prevent flash
   (function(){
-    const saved = localStorage.getItem("scrawl-theme");
-    if(saved==="light") document.documentElement.setAttribute("data-theme","light");
+    const s = localStorage.getItem('scrawl-theme');
+    if(s === 'light') document.documentElement.setAttribute('data-theme','light');
   })();
 
   function toggleTheme(){
     const html = document.documentElement;
-    const isLight = html.getAttribute("data-theme")==="light";
-    if(isLight){ html.removeAttribute("data-theme"); localStorage.setItem("scrawl-theme","dark"); }
-    else{ html.setAttribute("data-theme","light"); localStorage.setItem("scrawl-theme","light"); }
+    const isLight = html.getAttribute('data-theme') === 'light';
+    if(isLight){ html.removeAttribute('data-theme'); localStorage.setItem('scrawl-theme','dark'); }
+    else{ html.setAttribute('data-theme','light'); localStorage.setItem('scrawl-theme','light'); }
   }
 
-  // âââ CONFIG ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // ─── CONFIG ────────────────────────────────────────────────────────────────
   const API = "https://scrawl.live";
-  // const API = "http://localhost:8000"; // â uncomment for local dev
+  // const API = "http://localhost:8000"; // ← uncomment for local dev
 
-  // âââ STATE âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // ─── STATE ─────────────────────────────────────────────────────────────────
   let _currentData    = null;
   let _currentCat     = "auto";  // active category filter
   let _allCandidates  = [];      // full candidate list from /candidates
   let _lastQuery      = "";
 
-  // âââ HELPERS âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // ─── HELPERS ───────────────────────────────────────────────────────────────
   function setQ(v){ document.getElementById("q").value = v; go(); }
 
   function setCat(el, cat) {
@@ -706,9 +731,9 @@
     if(!rating) return "";
     const full=Math.floor(rating), half=rating-full>=0.5, empty=5-full-(half?1:0);
     let h='<div class="stars">';
-    for(let i=0;i<full;i++) h+='<span class="star-on">â</span>';
-    if(half) h+='<span class="star-on" style="opacity:.5">â</span>';
-    for(let i=0;i<empty;i++) h+='<span class="star-off">â</span>';
+    for(let i=0;i<full;i++) h+='<span class="star-on">★</span>';
+    if(half) h+='<span class="star-on" style="opacity:.5">★</span>';
+    for(let i=0;i<empty;i++) h+='<span class="star-off">★</span>';
     return h+'</div>';
   }
 
@@ -721,8 +746,8 @@
   }
 
   function catIcon(cat){
-    const m={movie:"ð¬",tv:"ðº",game:"ð®",music:"ðµ",book:"ð",product:"ð¦"};
-    return m[cat]||"ð";
+    const m={movie:"🎬",tv:"📺",game:"🎮",music:"🎵",book:"📚",product:"📦"};
+    return m[cat]||"🔍";
   }
 
   function escHtml(str){
@@ -731,15 +756,15 @@
       .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
   }
 
-  // âââ LOADING ANIMATION âââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // ─── LOADING ANIMATION ─────────────────────────────────────────────────────
   function showPickerLoading() {
-    document.getElementById("loadText").textContent = "Finding matchesâ¦";
+    document.getElementById("loadText").textContent = "Finding matches…";
     document.getElementById("loadSteps").style.display = "none";
     document.getElementById("loading").className = "show";
   }
 
   function showScoreLoading() {
-    document.getElementById("loadText").textContent = "Scanning the web for reviewsâ¦";
+    document.getElementById("loadText").textContent = "Scanning the web for reviews…";
     const stepsEl = document.getElementById("loadSteps");
     stepsEl.style.display = "";
     ["s1","s2","s3","s4"].forEach(s => document.getElementById(s).className = "load-step");
@@ -760,7 +785,7 @@
     next();
   }
 
-  // âââ STEP 1: SEARCH â FETCH CANDIDATES ââââââââââââââââââââââââââââââââââââ
+  // ─── STEP 1: SEARCH → FETCH CANDIDATES ────────────────────────────────────
   async function go(){
     const q = document.getElementById("q").value.trim();
     if(!q) return;
@@ -773,7 +798,7 @@
     showPickerLoading();
 
     try {
-      // Always fetch all categories â local tabs handle filtering
+      // Always fetch all categories — local tabs handle filtering
       const url = `${API}/candidates?q=${encodeURIComponent(q)}&category=auto`;
       const resp = await fetch(url);
       if(!resp.ok) throw new Error("Could not find results for that search.");
@@ -791,11 +816,11 @@
 
     } catch(e) {
       document.getElementById("loading").className = "";
-      showError("â  " + e.message);
+      showError("⚠ " + e.message);
     }
   }
 
-  // âââ STEP 2: SHOW PICKER ââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // ─── STEP 2: SHOW PICKER ──────────────────────────────────────────────────
   function showPicker(query, candidates) {
     // Work out which categories are present
     const cats = [...new Set(candidates.map(c => c.category))];
@@ -813,7 +838,7 @@
       <div class="picker-header fade-in">
         <h2>Results for <span class="qname">"${escHtml(query)}"</span></h2>
       </div>
-      <div class="picker-sub fade-in">Pick the one you meant â we'll fetch the full score.</div>
+      <div class="picker-sub fade-in">Pick the one you meant — we'll fetch the full score.</div>
       ${tabsHTML}
       <div class="picker-grid" id="pickerGrid">
         ${renderPickerCards(candidates)}
@@ -837,7 +862,7 @@
         : `<div class="pick-img-placeholder">${catIcon(c.category)}</div>`;
 
       const ratingHTML = c.rating
-        ? `<div class="pick-rating">â ${c.rating}${c.rating_max ? `<span class="pick-rating-max">/${c.rating_max}</span>` : ""}</div>`
+        ? `<div class="pick-rating">★ ${c.rating}${c.rating_max ? `<span class="pick-rating-max">/${c.rating_max}</span>` : ""}</div>`
         : "";
 
       return `<div class="pick-card fade-in" style="animation-delay:${i*0.04}s"
@@ -865,7 +890,7 @@
     document.getElementById("pickerGrid").innerHTML = renderPickerCards(filtered);
   }
 
-  // âââ STEP 3: USER PICKS â FETCH FULL SCORE ââââââââââââââââââââââââââââââââ
+  // ─── STEP 3: USER PICKS → FETCH FULL SCORE ────────────────────────────────
   async function selectCandidate(category, id, title) {
     document.getElementById("picker").className = "";
 
@@ -890,7 +915,7 @@
         clearInterval(poll);
         document.getElementById("loading").className = "";
         if(apiData?.error){
-          showError("â  " + apiData.error);
+          showError("⚠ " + apiData.error);
         } else {
           render(title, apiData);
         }
@@ -898,7 +923,7 @@
     });
   }
 
-  // âââ RENDER RESULTS âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // ─── RENDER RESULTS ───────────────────────────────────────────────────────
   function showError(msg) {
     const el = document.getElementById("error");
     el.textContent = msg;
@@ -924,7 +949,7 @@
       <div class="results-header fade-in">
         <h2>Results for <span class="qname">"${escHtml(query)}"</span></h2>
         <span class="source-count">${(d.sources||[]).length} sources analyzed</span>
-        <button class="back-btn" onclick="backToPicker()">â Back to results</button>
+        <button class="back-btn" onclick="backToPicker()">← Back to results</button>
       </div>
 
       <!-- PRODUCT HERO CARD -->
@@ -939,7 +964,7 @@
               <circle class="ring-fill r-${sc}" id="ringFill" cx="50" cy="50" r="45" stroke-dashoffset="${offset}"/>
             </svg>
             <div class="omni-label">
-              <div class="omni-num c-${sc}">${d.omniscore??'â'}</div>
+              <div class="omni-num c-${sc}">${d.omniscore??'—'}</div>
               <div class="omni-max">/100</div>
             </div>
           </div>
@@ -954,8 +979,8 @@
           </div>
           <div class="product-title">${escHtml(d.title||"")}</div>
           <div class="product-subtitle">${escHtml(d.subtitle||"")}</div>
-          <div class="verdict-pill ${verdictClass(d.verdict)}">â¦ ${d.verdict||"Analyzed"}</div>
-          <div class="ai-pill">â¨ AI Summary</div>
+          <div class="verdict-pill ${verdictClass(d.verdict)}">✦ ${d.verdict||"Analyzed"}</div>
+          <div class="ai-pill">✨ AI Summary</div>
           <div class="ai-summary">${escHtml(d.ai_summary||"")}</div>
         </div>
       </div>
@@ -963,8 +988,8 @@
       <!-- PRO CON -->
       ${proItems||conItems ? `
       <div class="pro-con fade-in d2">
-        ${proItems?`<div class="pro-box"><h4>ð What reviewers love</h4><ul>${proItems}</ul></div>`:""}
-        ${conItems?`<div class="con-box"><h4>ð Common criticisms</h4><ul>${conItems}</ul></div>`:""}
+        ${proItems?`<div class="pro-box"><h4>👍 What reviewers love</h4><ul>${proItems}</ul></div>`:""}
+        ${conItems?`<div class="con-box"><h4>👎 Common criticisms</h4><ul>${conItems}</ul></div>`:""}
       </div>`:""}
 
       <!-- SOURCES -->
