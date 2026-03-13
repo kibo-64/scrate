@@ -16,6 +16,7 @@ import hashlib
 from datetime import datetime, timedelta
 import unicodedata
 from bs4 import BeautifulSoup
+from urllib.parse import quote
 
 # âââ CONFIG ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
@@ -1888,7 +1889,7 @@ async def candidates_restaurants(query: str, client: httpx.AsyncClient) -> list:
     candidates = []
 
     if not GOOGLE_PLACES_KEY:
-        logger.warning("[restaurant] GOOGLE_PLACES_API_KEY not set")
+        print("[restaurant] GOOGLE_PLACES_API_KEY not set")
         return candidates
 
     # Google Places Text Search (New) v1
@@ -1906,9 +1907,9 @@ async def candidates_restaurants(query: str, client: httpx.AsyncClient) -> list:
     }
     try:
         r = await client.post(url, json=body, headers=headers, timeout=10)
-        logger.info(f"[restaurant] Places API status={r.status_code}")
+        print(f"[restaurant] Places API status={r.status_code}")
         if r.status_code != 200:
-            logger.warning(f"[restaurant] Places API error: {r.text[:300]}")
+            print(f"[restaurant] Places API error: {r.text[:300]}")
             return candidates
         data = r.json()
         for place in data.get("places", [])[:8]:
@@ -1951,9 +1952,9 @@ async def candidates_restaurants(query: str, client: httpx.AsyncClient) -> list:
                 "sources": [],
             })
     except Exception as e:
-        logger.warning(f"candidates_restaurants error: {e}")
+        print(f"candidates_restaurants error: {e}")
 
-    logger.info(f"[restaurant] returning {len(candidates)} candidates")
+    print(f"[restaurant] returning {len(candidates)} candidates")
     return candidates[:8]
 
 
@@ -1992,7 +1993,7 @@ async def scrape_yelp_rating(name: str, location: str, client: httpx.AsyncClient
             return {"source": "Yelp", "score": float(m.group(1)), "max": 5, "url": url}
         return None
     except Exception as e:
-        logger.warning(f"scrape_yelp_rating error: {e}")
+        print(f"scrape_yelp_rating error: {e}")
         return None
 
 
@@ -2028,7 +2029,7 @@ async def scrape_tripadvisor_rating(name: str, location: str, client: httpx.Asyn
                     }
         return None
     except Exception as e:
-        logger.warning(f"scrape_tripadvisor_rating error: {e}")
+        print(f"scrape_tripadvisor_rating error: {e}")
         return None
 
 
@@ -2057,7 +2058,7 @@ async def scrape_google_reviews(name: str, location: str, client: httpx.AsyncCli
             }
         return None
     except Exception as e:
-        logger.warning(f"scrape_google_reviews error: {e}")
+        print(f"scrape_google_reviews error: {e}")
         return None
 
 
@@ -2083,7 +2084,7 @@ async def scrape_opentable_rating(name: str, location: str, client: httpx.AsyncC
                     return {"source": "OpenTable", "score": float(rm.group(1)), "max": 5, "url": ot_link.group(1)}
         return None
     except Exception as e:
-        logger.warning(f"scrape_opentable_rating error: {e}")
+        print(f"scrape_opentable_rating error: {e}")
         return None
 
 
@@ -2101,7 +2102,7 @@ async def _google_places_details(place_id: str, client: httpx.AsyncClient) -> di
         if r.status_code == 200:
             return r.json()
     except Exception as e:
-        logger.warning(f"_google_places_details error: {e}")
+        print(f"_google_places_details error: {e}")
     return None
 
 
