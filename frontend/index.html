@@ -1029,8 +1029,8 @@
     showPickerLoading();
 
     try {
-      // Always fetch all categories — local tabs handle filtering
-      const url = `${API}/candidates?q=${encodeURIComponent(q)}&category=auto`;
+      // Pass selected category (or auto if none selected)
+      const url = `${API}/candidates?q=${encodeURIComponent(q)}&category=${_currentCat}`;
       const resp = await fetch(url);
       if(!resp.ok) throw new Error("Could not find results for that search.");
       const data = await resp.json();

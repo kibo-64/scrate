@@ -160,11 +160,13 @@ CAR_KW     = {"car","suv","truck","sedan","coupe","hatchback","convertible","min
                "horsepower","mpg","torque","0-60","turbo","hybrid","electric vehicle",
                "toyota","honda","ford","chevrolet","bmw","mercedes","audi","tesla",
                "hyundai","kia","nissan","volkswagen","subaru","mazda","porsche","lexus"}
-RESTAURANT_KW = {"restaurant","diner","cafe","bistro","pizzeria","steakhouse","sushi",
+RESTAURANT_KW = {"restaurant","diner","cafe","bistro","pizzeria","pizza","steakhouse","sushi",
                   "brunch","eatery","food","dining","takeout","takeaway","burger","taco",
                   "ramen","bbq","barbecue","seafood","buffet","gastropub","trattoria",
                   "brasserie","pub food","noodle","dim sum","thai","italian restaurant",
-                  "mexican restaurant","chinese restaurant","indian restaurant","korean bbq"}
+                  "mexican restaurant","chinese restaurant","indian restaurant","korean bbq",
+                  "wings","pho","curry","sandwich","deli","bakery","coffee shop","ice cream",
+                  "donut","waffle","pancake","grill","cantina","tavern"}
 
 def detect_category(query: str) -> str:
     q = query.lower()
