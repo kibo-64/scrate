@@ -2295,7 +2295,7 @@ async def get_candidates(
             tasks.append(candidates_music(q, client))
         if category == "car" or (category == "auto" and detect_category(q) == "car"):
             tasks.append(candidates_cars(q, client))
-        if category == "restaurant" or (category == "auto" and detect_category(q) == "restaurant"):
+        if category in ("restaurant", "auto"):
             tasks.append(candidates_restaurants(q, client))
 
         lists = await asyncio.gather(*tasks, return_exceptions=True)
