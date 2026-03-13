@@ -1899,19 +1899,22 @@ async def candidates_restaurants(query: str, client: httpx.AsyncClient) -> list:
         "X-Goog-Api-Key": GOOGLE_PLACES_KEY,
         "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.photos,places.priceLevel,places.editorialSummary",
     }
+    # Don't use includedType – it's too strict (e.g. won't match "mexican_restaurant").
+    # Instead, append "restaurant" to the query so Google finds food places.
+    search_query = query if "restaurant" in query.lower() else f"{query} restaurant"
     body = {
-        "textQuery": query,
-        "includedType": "restaurant",
+        "textQuery": search_query,
         "languageCode": "en",
         "maxResultCount": 10,
     }
     try:
         r = await client.post(url, json=body, headers=headers, timeout=10)
-        print(f"[restaurant] Places API status={r.status_code}")
+        print(f"[restaurant] Places API status={r.status_code} query={search_query!r}")
         if r.status_code != 200:
-            print(f"[restaurant] Places API error: {r.text[:300]}")
+            print(f"[restaurant] Places API error: {r.text[:500]}")
             return candidates
         data = r.json()
+        print(f"[restaurant] raw places count={len(data.get('places', []))}")
         for place in data.get("places", [])[:8]:
             name = place.get("displayName", {}).get("text", "")
             if not name:
