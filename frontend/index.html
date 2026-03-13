@@ -157,14 +157,34 @@
     }
     .search-box input::placeholder { color: var(--muted); }
     .search-btn {
-      background: linear-gradient(135deg, #7c6fff, #b19fff);
-      color: #fff; border:none; border-radius: 13px;
+      position:relative; overflow:hidden;
+      background: #1a1a2e; color: #e2e0ff;
+      border:1px solid rgba(124,111,255,0.3); border-radius: 13px;
       padding: 11px 26px; font-size:0.95rem; font-weight:700;
       cursor:pointer; white-space:nowrap;
-      transition: opacity .2s, transform .15s;
+      transition: all .4s cubic-bezier(.23,1,.32,1);
+      z-index:1;
     }
-    .search-btn:hover { opacity:.88; transform: translateY(-1px); }
-    .search-btn:active { transform: translateY(0); }
+    .search-btn::before {
+      content:''; position:absolute; inset:-2px; border-radius:15px;
+      background: conic-gradient(from var(--btn-angle,0deg), #7c6fff 0%, #c084fc 25%, #f0abfc 50%, #818cf8 75%, #7c6fff 100%);
+      opacity:0; transition:opacity .5s ease; z-index:-2;
+      animation: btnOrbit 4s linear infinite;
+    }
+    .search-btn::after {
+      content:''; position:absolute; inset:1px; border-radius:12px;
+      background: var(--card, #1a1a2e); z-index:-1;
+      transition: background .3s ease;
+    }
+    .search-btn:hover {
+      color:#fff; border-color:transparent; transform: translateY(-2px);
+      box-shadow: 0 0 20px rgba(124,111,255,0.3), 0 0 60px rgba(192,132,252,0.15);
+      letter-spacing:0.02em;
+    }
+    .search-btn:hover::before { opacity:1; }
+    .search-btn:active { transform: translateY(0) scale(0.97); }
+    @property --btn-angle { syntax:'<angle>'; initial-value:0deg; inherits:false; }
+    @keyframes btnOrbit { to { --btn-angle:360deg; } }
 
     /* category pills */
     .cat-pills {
@@ -645,6 +665,9 @@
     .hero-h1 .w4{background-image:linear-gradient(135deg,var(--text) 0%,#f472b6 50%,var(--text) 100%);}
     @keyframes wordWave{0%{background-position:0% center;}100%{background-position:200% center;}}
 
+    [data-theme="light"] .search-btn{background:#f8f7ff;color:#4338ca;border-color:rgba(124,111,255,0.25);}
+    [data-theme="light"] .search-btn::after{background:#f8f7ff;}
+    [data-theme="light"] .search-btn:hover{color:#312e81;background:#f0edff;}
     [data-theme="light"] .hero-h1 .w1{background-image:linear-gradient(135deg,#1a1a2e 0%,#6355e8 50%,#1a1a2e 100%);}
     [data-theme="light"] .hero-h1 .w2{background-image:linear-gradient(135deg,#1a1a2e 0%,#2563eb 50%,#1a1a2e 100%);}
     [data-theme="light"] .hero-h1 .w3{background-image:linear-gradient(135deg,#1a1a2e 0%,#059669 50%,#1a1a2e 100%);}
@@ -658,8 +681,8 @@
       border-color:var(--accent) !important;
       box-shadow:0 0 0 3px rgba(124,111,255,0.18),0 4px 24px rgba(124,111,255,0.12) !important;
     }
-    .search-btn{transition:transform 0.2s ease,box-shadow 0.2s ease !important;}
-    .search-btn:hover{box-shadow:0 8px 28px rgba(124,111,255,0.45) !important;transform:scale(1.02);}
+    .search-btn{transition:all 0.4s cubic-bezier(.23,1,.32,1) !important;}
+    .search-btn:hover{box-shadow:0 0 20px rgba(124,111,255,0.3),0 0 60px rgba(192,132,252,0.15) !important;}
 
     /* ── Category + hero pills ── */
     .cat-pill,.hero-pill{transition:transform 0.2s ease,box-shadow 0.2s ease !important;}
@@ -776,22 +799,7 @@
 }
 /* ============================================================= */
 
-  .search-btn {
-    background: linear-gradient(90deg, #8b5cf6, #ec4899, #f97316, #8b5cf6) !important;
-    background-size: 300% 100% !important;
-    animation: btnGradient 4s ease infinite !important;
-    color: #fff !important;
-    border: none !important;
-  }
-  .search-btn:hover {
-    animation: btnGradient 1.5s ease infinite !important;
-    transform: scale(1.04);
-  }
-  @keyframes btnGradient {
-    0%   { background-position: 0% 50%; }
-    50%  { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
-  }
+  /* search-btn magic glow is handled above */
 </style>
 </head>
 <body>
@@ -826,7 +834,7 @@
 <!-- HERO -->
 <div class="hero" id="hero">
   <div class="hero-badge fade-up" style="animation-delay:0.1s">✦ EVERYTHING ABOUT EVERYTHING ✦</div>
-  <h1 class="hero-h1 fade-up" style="animation-delay:0.25s"><span class="w1">Unsure about</span> <span class="w2">something?</span><br/><span class="w3">Scrawl</span> <span class="w4">it.</span></h1>
+  <h1 class="hero-h1 fade-up" style="animation-delay:0.25s;font-weight:400;font-size:clamp(1.6rem,7vw,2.6rem)"><span class="w1">Unsure about</span> <span class="w2">something?</span><br/><span class="w3" style="font-weight:700">Scrawl</span> <span class="w4" style="font-weight:700">it.</span></h1>
   <p class="fade-up" style="animation-delay:0.4s">Search for anything and get the general consensus score pulled from every major source on the web.</p>
 
   <div class="search-wrap">
@@ -834,17 +842,21 @@
       <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="#7878a0" stroke-width="2.2">
         <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
       </svg>
-      <input id="q" type="text" placeholder="Search a movie, game, car, album, book…" onkeydown="if(event.key==='Enter')go()" />
+      <input id="q" type="text" placeholder="Search a movie, game, restaurant, album, phone…" onkeydown="if(event.key==='Enter')go()" />
       <button class="search-btn" onclick="go()">Scrawl it</button>
     </div>
 
     <div class="cat-pills" id="catPills">
       <span class="cat-pill" data-cat="movie"  onclick="setCat(this,'movie')">🎬 Movies</span>
+      <span class="cat-pill" data-cat="tv"     onclick="setCat(this,'tv')">📺 TV Shows</span>
       <span class="cat-pill" data-cat="game"   onclick="setCat(this,'game')">🎮 Games</span>
       <span class="cat-pill" data-cat="music"  onclick="setCat(this,'music')">🎵 Music</span>
       <span class="cat-pill" data-cat="book"   onclick="setCat(this,'book')">📚 Books</span>
-      <span class="cat-pill" data-cat="tv"     onclick="setCat(this,'tv')">📺 TV</span>
       <span class="cat-pill" data-cat="car"    onclick="setCat(this,'car')">🚗 Cars</span>
+      <span class="cat-pill" data-cat="electronics" onclick="setCat(this,'electronics')">📱 Electronics</span>
+      <span class="cat-pill" data-cat="restaurant" onclick="setCat(this,'restaurant')">🍽️ Restaurants</span>
+      <span class="cat-pill" data-cat="software" onclick="setCat(this,'software')">💻 Software</span>
+      <span class="cat-pill" data-cat="appliance" onclick="setCat(this,'appliance')">🏠 Home &amp; Appliances</span>
     </div>
 
     <div class="suggestions" style="margin-top:10px;">
@@ -971,7 +983,7 @@
   }
 
   function catIcon(cat){
-    const m={movie:"🎬",tv:"📺",game:"🎮",music:"🎵",book:"📚",product:"📦"};
+    const m={movie:"🎬",tv:"📺",game:"🎮",music:"🎵",book:"📚",car:"🚗",electronics:"📱",restaurant:"🍽️",software:"💻",appliance:"🏠",product:"📦"};
     return m[cat]||"🔍";
   }
 
