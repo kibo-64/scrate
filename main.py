@@ -206,30 +206,83 @@ async def scrape_metacritic_movie(title: str, year: str, client: httpx.AsyncClie
     return None
 
 
-async def scrape_rt_movie(title: str, client: httpx.AsyncClient) -> dict | None:
-    """Attempt to scrape Rotten Tomatoes Tomatometer."""
+async def scrape_rt_movie(title: str, client: httpx.AsyncClient) -> list[dict] | None:
+    """Scrape Rotten Tomatoes Tomatometer + Audience Score. Returns list of sources."""
     slug = re.sub(r"[^a-z0-9\s_]", "", title.lower()).strip().replace(" ", "_")
-    url = f"https://www.rottentomatoes.com/m/{slug}"
-    try:
-        r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
-        if r.status_code != 200:
-            return None
-        soup = BeautifulSoup(r.text, "html.parser")
-        # RT embeds score as JSON in a script tag
-        for script in soup.find_all("script"):
-            text = script.string or ""
-            if "tomatoMeter" in text or "criticsScore" in text:
-                m = re.search(r'"tomatoMeter":\s*(\d+)', text)
-                if not m:
-                    m = re.search(r'"criticsScore":\s*(\d+)', text)
-                if m:
-                    score = m.group(1)
-                    return build_source(
-                        "Rotten Tomatoes", "Expert", "&#127813;", "#fa320a",
-                        score + "%", None
-                    )
-    except Exception:
-        pass
+    urls = [
+        f"https://www.rottentomatoes.com/m/{slug}",
+        f"https://www.rottentomatoes.com/m/{slug.replace('_', '-')}",
+    ]
+
+    def _parse_rt(html: str) -> list[dict] | None:
+        soup = BeautifulSoup(html, "html.parser")
+        results = []
+        # Look for score-board or media-scorecard element attributes
+        sb = soup.find("score-board") or soup.find("media-scorecard")
+        tomatometer = None
+        audience = None
+        if sb:
+            tomatometer = sb.get("tomatometerscore") or sb.get("criticsScore")
+            audience = sb.get("audiencescore") or sb.get("audienceScore")
+        # Fallback: search for JSON-LD or scoreboard data in scripts
+        if not tomatometer:
+            for script in soup.find_all("script", type="application/ld+json"):
+                try:
+                    data = json.loads(script.string or "")
+                    if isinstance(data, dict) and data.get("aggregateRating"):
+                        val = data["aggregateRating"].get("ratingValue")
+                        if val:
+                            tomatometer = str(int(float(val)))
+                except Exception:
+                    pass
+        # Fallback: regex for tomatometer in page text
+        if not tomatometer:
+            m = re.search(r'"tomatometerScore":\s*\{[^}]*"score":\s*(\d+)', html)
+            if m:
+                tomatometer = m.group(1)
+        if not audience:
+            m = re.search(r'"audienceScore":\s*\{[^}]*"score":\s*(\d+)', html)
+            if m:
+                audience = m.group(1)
+        if tomatometer:
+            results.append(build_source(
+                "Rotten Tomatoes", "Expert", "&#127813;", "#fa320a",
+                tomatometer, "/100"
+            ))
+        if audience:
+            results.append(build_source(
+                "RT Audience", "Users", "&#127871;", "#f5c518",
+                audience, "/100"
+            ))
+        return results if results else None
+
+    for url in urls:
+        print(f"[RT] Trying: {url}")
+        # Try cf_fetch first
+        html = await cf_fetch(url, client)
+        if html:
+            print(f"[RT] cf_fetch got HTML len={len(html)}")
+            result = _parse_rt(html)
+            if result:
+                print(f"[RT] FOUND {len(result)} scores via cf_fetch")
+                return result
+            else:
+                print(f"[RT] parse failed on cf_fetch html")
+        else:
+            print(f"[RT] cf_fetch returned nothing")
+        # Fallback: direct GET
+        try:
+            r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+            print(f"[RT] GET status={r.status_code} len={len(r.text)}")
+            if r.status_code == 200:
+                result = _parse_rt(r.text)
+                if result:
+                    print(f"[RT] FOUND {len(result)} scores via GET")
+                    return result
+                else:
+                    print(f"[RT] parse failed on GET html")
+        except Exception as e:
+            print(f"[RT] GET error: {e}")
     return None
 
 
@@ -1449,7 +1502,10 @@ async def score_tmdb_by_id(item_id: str, media_type: str, client: httpx.AsyncCli
         )
         for s in extra:
             if s and not isinstance(s, Exception):
-                sources.append(s)
+                if isinstance(s, list):
+                    sources.extend(s)
+                else:
+                    sources.append(s)
 
         return {
             "title":     title,
