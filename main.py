@@ -1881,84 +1881,79 @@ async def _fetch_html(url: str, client: httpx.AsyncClient) -> str | None:
     return await cf_fetch(url, client)
 
 
+GOOGLE_PLACES_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
+
 async def candidates_restaurants(query: str, client: httpx.AsyncClient) -> list:
-    """Search for restaurant candidates via Google search results."""
-    import re as _re
+    """Search for restaurant candidates via Google Places Text Search API."""
     candidates = []
 
-    # Strategy 1: Google search for restaurants
-    google_url = f"https://www.google.com/search?q={quote(query + ' restaurant reviews')}&num=10"
+    if not GOOGLE_PLACES_KEY:
+        logger.warning("[restaurant] GOOGLE_PLACES_API_KEY not set")
+        return candidates
+
+    # Google Places Text Search (New) v1
+    url = "https://places.googleapis.com/v1/places:searchText"
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": GOOGLE_PLACES_KEY,
+        "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.photos,places.priceLevel,places.editorialSummary",
+    }
+    body = {
+        "textQuery": query,
+        "includedType": "restaurant",
+        "languageCode": "en",
+        "maxResultCount": 10,
+    }
     try:
-        html = await _fetch_html(google_url, client)
-        if html:
-            # Extract restaurant names from Google search results
-            # Look for restaurant names in title tags and headings
-            titles = _re.findall(r'<h3[^>]*>(.*?)</h3>', html, _re.S)
-            seen = set()
-            for title in titles:
-                clean = _re.sub(r'<[^>]+>', '', title).strip()
-                # Filter out non-restaurant results
-                if not clean or len(clean) > 80 or len(clean) < 3:
-                    continue
-                # Remove common suffixes like "- Yelp", "- TripAdvisor", etc.
-                clean = _re.sub(r'\s*[-|].*?(Yelp|TripAdvisor|OpenTable|Google|Maps|Menu|Reviews|Prices).*$', '', clean, flags=_re.I).strip()
-                clean = _re.sub(r'\s*[-|]\s*\d+\s*photos?.*$', '', clean, flags=_re.I).strip()
-                if not clean or clean.lower() in seen or len(clean) < 3:
-                    continue
-                seen.add(clean.lower())
-                # Try to extract location from nearby text
-                loc_match = _re.search(r'(?:in|near|at)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', clean)
-                location = loc_match.group(1) if loc_match else ""
-                candidates.append({
-                    "id": f"{clean}::{location}",
-                    "title": clean,
-                    "category": "restaurant",
-                    "image_url": "",
-                    "year": location,
-                    "overview": "",
-                    "sources": [],
-                })
-                if len(candidates) >= 8:
-                    break
+        r = await client.post(url, json=body, headers=headers, timeout=10)
+        logger.info(f"[restaurant] Places API status={r.status_code}")
+        if r.status_code != 200:
+            logger.warning(f"[restaurant] Places API error: {r.text[:300]}")
+            return candidates
+        data = r.json()
+        for place in data.get("places", [])[:8]:
+            name = place.get("displayName", {}).get("text", "")
+            if not name:
+                continue
+            addr = place.get("formattedAddress", "")
+            rating = place.get("rating")
+            count = place.get("userRatingCount", 0)
+            summary = place.get("editorialSummary", {}).get("text", "") if isinstance(place.get("editorialSummary"), dict) else ""
+            place_id = place.get("id", "")
+            # Get photo URL if available
+            image_url = ""
+            photos = place.get("photos", [])
+            if photos:
+                photo_name = photos[0].get("name", "")
+                if photo_name:
+                    image_url = f"https://places.googleapis.com/v1/{photo_name}/media?maxHeightPx=400&maxWidthPx=400&key={GOOGLE_PLACES_KEY}"
+            # Extract city from address (usually after first comma)
+            city = ""
+            if addr:
+                parts = [p.strip() for p in addr.split(",")]
+                city = parts[1] if len(parts) > 1 else parts[0]
+
+            overview = ""
+            if rating:
+                overview = f"Google: {rating}/5"
+                if count:
+                    overview += f" ({count:,} reviews)"
+            if summary:
+                overview += f" — {summary}" if overview else summary
+
+            candidates.append({
+                "id": f"{name}::{city}::{place_id}",
+                "title": name,
+                "category": "restaurant",
+                "image_url": image_url,
+                "year": city,
+                "overview": overview,
+                "sources": [],
+            })
     except Exception as e:
-        logger.warning(f"candidates_restaurants google error: {e}")
+        logger.warning(f"candidates_restaurants error: {e}")
 
-    # Strategy 2: Try Yelp search via cf_fetch or direct
-    if len(candidates) < 3:
-        yelp_url = f"https://www.yelp.com/search?find_desc={quote(query)}&find_loc="
-        try:
-            resp = await _fetch_html(yelp_url, client)
-            if resp:
-                ld_blocks = _re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', resp, _re.S)
-                for block in ld_blocks:
-                    try:
-                        data = json.loads(block)
-                        if isinstance(data, dict) and data.get("@type") == "ItemList":
-                            for item in data.get("itemListElement", [])[:8]:
-                                biz = item.get("itemReviewed") or item
-                                name = biz.get("name", "")
-                                if not name or name.lower() in {c["title"].lower() for c in candidates}:
-                                    continue
-                                addr = biz.get("address", {})
-                                city = addr.get("addressLocality", "") if isinstance(addr, dict) else ""
-                                rating = biz.get("aggregateRating", {}).get("ratingValue")
-                                image = biz.get("image") or ""
-                                if isinstance(image, list):
-                                    image = image[0] if image else ""
-                                candidates.append({
-                                    "id": f"{name}::{city}",
-                                    "title": name,
-                                    "category": "restaurant",
-                                    "image_url": image,
-                                    "year": city,
-                                    "overview": f"Rating: {rating}/5" if rating else "",
-                                    "sources": [],
-                                })
-                    except json.JSONDecodeError:
-                        continue
-        except Exception as e:
-            logger.warning(f"candidates_restaurants yelp error: {e}")
-
+    logger.info(f"[restaurant] returning {len(candidates)} candidates")
     return candidates[:8]
 
 
@@ -2092,54 +2087,105 @@ async def scrape_opentable_rating(name: str, location: str, client: httpx.AsyncC
         return None
 
 
+async def _google_places_details(place_id: str, client: httpx.AsyncClient) -> dict | None:
+    """Fetch detailed info for a place via Google Places API."""
+    if not GOOGLE_PLACES_KEY or not place_id:
+        return None
+    url = f"https://places.googleapis.com/v1/places/{place_id}"
+    headers = {
+        "X-Goog-Api-Key": GOOGLE_PLACES_KEY,
+        "X-Goog-FieldMask": "id,displayName,rating,userRatingCount,priceLevel,editorialSummary,formattedAddress,photos,websiteUri,googleMapsUri",
+    }
+    try:
+        r = await client.get(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            return r.json()
+    except Exception as e:
+        logger.warning(f"_google_places_details error: {e}")
+    return None
+
+
 async def score_restaurant_by_id(restaurant_id: str, client: httpx.AsyncClient) -> dict | None:
     """
-    Orchestrator: score a restaurant from Yelp, TripAdvisor, Google, OpenTable.
-    restaurant_id format: "Restaurant Name::City"
+    Orchestrator: score a restaurant using Google Places API + supplementary scrapers.
+    restaurant_id format: "Restaurant Name::City::PlaceID"
     """
-    parts = restaurant_id.split("::", 1)
-    name = parts[0].strip()
+    parts = restaurant_id.split("::")
+    name = parts[0].strip() if len(parts) > 0 else ""
     location = parts[1].strip() if len(parts) > 1 else ""
-
-    tasks = [
-        scrape_yelp_rating(name, location, client),
-        scrape_tripadvisor_rating(name, location, client),
-        scrape_google_reviews(name, location, client),
-        scrape_opentable_rating(name, location, client),
-    ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    place_id = parts[2].strip() if len(parts) > 2 else ""
 
     sources = []
+    details = None
+
+    # Primary: Google Places API (reliable, always works)
+    if place_id and GOOGLE_PLACES_KEY:
+        details = await _google_places_details(place_id, client)
+        if details:
+            rating = details.get("rating")
+            count = details.get("userRatingCount", 0)
+            if rating:
+                sources.append({
+                    "name": "Google",
+                    "type": "critic",
+                    "score": round(rating * 20),
+                    "outOf": 100,
+                    "reviews": count,
+                    "url": details.get("googleMapsUri", ""),
+                })
+
+    # Supplementary scrapers (Yelp, TripAdvisor, OpenTable via cf_fetch/direct HTTP)
+    scraper_tasks = [
+        scrape_yelp_rating(name, location, client),
+        scrape_tripadvisor_rating(name, location, client),
+        scrape_opentable_rating(name, location, client),
+    ]
+    results = await asyncio.gather(*scraper_tasks, return_exceptions=True)
+
     for r in results:
         if isinstance(r, dict) and r:
-            sources.append(r)
+            # Convert to standard source format
+            score = r.get("score", 0)
+            mx = r.get("max", 5)
+            sources.append({
+                "name": r.get("source", "Unknown"),
+                "type": "critic",
+                "score": round((score / mx) * 100) if mx else 0,
+                "outOf": 100,
+                "reviews": r.get("count"),
+                "url": r.get("url", ""),
+            })
 
     if not sources:
         return None
 
-    # Normalize scores to 0-100 and compute OmniScore
-    normalized = []
-    for s in sources:
-        score = s.get("score", 0)
-        mx = s.get("max", 5)
-        norm = round((score / mx) * 100) if mx else 0
-        s["normalized"] = norm
-        normalized.append(norm)
-
-    omniscore = round(sum(normalized) / len(normalized)) if normalized else 0
-
-    # Find best image from Yelp search
+    # Get image from Google Places
     image_url = ""
-    yelp_url = f"https://www.yelp.com/search?find_desc={quote(name + ' ' + location)}"
+    if place_id and GOOGLE_PLACES_KEY:
+        if not details:
+            details = await _google_places_details(place_id, client)
+        photos = (details or {}).get("photos", [])
+        if photos:
+            photo_name = photos[0].get("name", "")
+            if photo_name:
+                image_url = f"https://places.googleapis.com/v1/{photo_name}/media?maxHeightPx=400&maxWidthPx=400&key={GOOGLE_PLACES_KEY}"
+
+    overview_text = ""
+    if place_id and GOOGLE_PLACES_KEY and details:
+        summary = details.get("editorialSummary", {})
+        if isinstance(summary, dict):
+            overview_text = summary.get("text", "")
+    if not overview_text:
+        overview_text = f"Restaurant in {location}" if location else "Restaurant"
 
     return {
         "title": name,
-        "omniscore": omniscore,
+        "omniscore": 0,
         "scores": sources,
         "category": "restaurant",
         "image_url": image_url,
         "year": location,
-        "overview": f"Restaurant in {location}" if location else "Restaurant",
+        "overview": overview_text,
         "sources": sources,
     }
 
