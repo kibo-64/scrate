@@ -991,62 +991,87 @@ async def score_polygon(title: str, category: str, client: httpx.AsyncClient) ->
 
 # ─── CAR SCRAPERS ──────────────────────────────────────────────────────────────
 async def score_nhtsa_safety(year: str, make: str, model: str, client: httpx.AsyncClient) -> dict | None:
-    """NHTSA 5-star safety rating — two-step: get VehicleId then fetch overall rating."""
+    """NHTSA government crash-test overall star rating with year fallback."""
     try:
-        if not year or not make or not model:
-            return None
-        # Step 1: find matching VehicleId(s)
-        r1 = await client.get(
-            f"https://api.nhtsa.gov/SafetyRatings/modelyear/{year}/make/{make}/model/{model}",
-            timeout=8,
-        )
-        vehicles = r1.json().get("Results", [])
-        if not vehicles:
-            return None
-        vehicle_id = vehicles[0].get("VehicleId")
-        if not vehicle_id:
-            return None
-        # Step 2: fetch detailed ratings for that vehicle
-        r2 = await client.get(
-            f"https://api.nhtsa.gov/SafetyRatings/VehicleId/{vehicle_id}",
-            timeout=8,
-        )
-        detail = (r2.json().get("Results") or [{}])[0]
-        overall = detail.get("OverallRating")
-        if not overall or overall == "Not Rated":
-            return None
-        return build_source("NHTSA Safety", "Expert", "&#128737;", "#002868",
-                             str(overall), "5", reviews="Gov't crash tests")
-    except Exception:
-        return None
-
-
-async def score_edmunds(year: str, make: str, model: str, client: httpx.AsyncClient) -> dict | None:
-    """Edmunds expert rating (0-10)."""
-    try:
-        make_slug  = re.sub(r"[^a-z0-9]", "", make.lower())
-        model_slug = re.sub(r"[^a-z0-9-]", "", model.lower().replace(" ", "-"))
-        url = f"https://www.edmunds.com/{make_slug}/{model_slug}/{year}/review/"
-        r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
-        if r.status_code != 200:
-            return None
-        soup = BeautifulSoup(r.text, "html.parser")
-        # JSON-LD
-        for ld_tag in soup.find_all("script", type="application/ld+json"):
+        base_year = int(year) if year and str(year).isdigit() else datetime.now().year
+        for try_year in [base_year, base_year - 1, base_year - 2]:
             try:
-                ld = json.loads(ld_tag.string or "")
-                rat = ld.get("reviewRating") or ld.get("aggregateRating") or {}
-                val = rat.get("ratingValue")
-                best = rat.get("bestRating", 10)
-                if val:
-                    return build_source("Edmunds", "Expert", "&#127775;", "#0f6ab4",
-                                        str(val), str(best))
+                r1 = await client.get(
+                    f"https://api.nhtsa.gov/SafetyRatings/modelyear/{try_year}/make/{make}/model/{model}",
+                    timeout=8
+                )
+                vehicles = r1.json().get("Results", [])
+                if not vehicles:
+                    continue
+                vehicle_id = vehicles[0].get("VehicleId")
+                if not vehicle_id:
+                    continue
+                r2 = await client.get(
+                    f"https://api.nhtsa.gov/SafetyRatings/VehicleId/{vehicle_id}",
+                    timeout=8
+                )
+                detail = (r2.json().get("Results") or [{}])[0]
+                overall = detail.get("OverallRating")
+                if not overall or overall == "Not Rated":
+                    continue
+                return build_source(
+                    "NHTSA Safety", "Expert", "&#128737;", "#002868",
+                    str(overall), "5",
+                    reviews=f"Gov't crash tests ({try_year})"
+                )
             except Exception:
                 continue
-        # Regex fallback
-        m = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', r.text)
-        if m:
-            return build_source("Edmunds", "Expert", "&#127775;", "#0f6ab4", m.group(1), "10")
+    except Exception:
+        pass
+    return None
+
+async def score_edmunds(year: str, make: str, model: str, client: httpx.AsyncClient) -> dict | None:
+    """Edmunds expert review score."""
+    def _parse_edmunds(html: str):
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            for ld_tag in soup.find_all("script", type="application/ld+json"):
+                try:
+                    ld = json.loads(ld_tag.string or "")
+                    items = [ld] if isinstance(ld, dict) else (ld.get("@graph") or [])
+                    for item in items:
+                        rat = item.get("reviewRating") or item.get("ratingValue")
+                        if isinstance(rat, dict):
+                            rat = rat.get("ratingValue")
+                        if rat:
+                            return build_source("Edmunds", "Expert", "&#128663;", "#00968f", str(rat), "10")
+                except Exception:
+                    pass
+            m = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', html)
+            if m:
+                return build_source("Edmunds", "Expert", "&#128663;", "#00968f", m.group(1), "10")
+            m2 = re.search(r'[Ee]ditor[^"]*?([\d.]+)\s*/\s*10', html)
+            if m2:
+                return build_source("Edmunds", "Expert", "&#128663;", "#00968f", m2.group(1), "10")
+        except Exception:
+            pass
+        return None
+    try:
+        make_slug = re.sub(r"[^a-z0-9]", "", make.lower())
+        model_slug = re.sub(r"[^a-z0-9-]", "", model.lower().replace(" ", "-"))
+        urls = [
+            f"https://www.edmunds.com/{make_slug}/{model_slug}/{year}/review/",
+            f"https://www.edmunds.com/{make_slug}/{model_slug}/review/",
+        ]
+        for url in urls:
+            html = await cf_fetch(url, client)
+            if html:
+                result = _parse_edmunds(html)
+                if result:
+                    return result
+            try:
+                r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+                if r.status_code == 200:
+                    result = _parse_edmunds(r.text)
+                    if result:
+                        return result
+            except Exception:
+                pass
     except Exception:
         pass
     return None
