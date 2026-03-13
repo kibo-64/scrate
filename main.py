@@ -547,8 +547,11 @@ async def score_rogerebert(title: str, year: str, client: httpx.AsyncClient) -> 
         slug_no_article = re.sub(r"^the-|^a-|^an-", "", slug)
         urls = []
         if year:
+            urls.append(f"https://www.rogerebert.com/reviews/{slug}-film-review-{year}")
+            urls.append(f"https://www.rogerebert.com/reviews/{slug}-movie-review-{year}")
             urls.append(f"https://www.rogerebert.com/reviews/{slug}-{year}")
             if slug_no_article != slug:
+                urls.append(f"https://www.rogerebert.com/reviews/{slug_no_article}-film-review-{year}")
                 urls.append(f"https://www.rogerebert.com/reviews/{slug_no_article}-{year}")
         urls.append(f"https://www.rogerebert.com/reviews/{slug}")
         if slug_no_article != slug:
@@ -1752,12 +1755,12 @@ async def generate_ai_analysis(
         for s in sources
     ) or "  â¢ No third-party scores available yet."
 
-    prompt = f"""You are Scrawl's AI analyst. Scrawl is a review aggregator that gives every product, movie, game, book, and album a single OmniScore out of 100.
+    prompt = f"""You are Scrawl's AI analyst. Scrawl is a review aggregator that gives every product, movie, game, book, and album a General Consensus score out of 100.
 
 Produce a short, punchy analysis for:
   Title:      {title}
   Category:   {category}
-  OmniScore:  {omniscore}/100
+  Consensus:  {omniscore}/100
   Overview:   {overview[:300] if overview else "N/A"}
 
 Scores from across the web:
@@ -1765,7 +1768,7 @@ Scores from across the web:
 
 Reply ONLY with valid JSON in this exact format â no extra text:
 {{
-  "summary": "2-3 punchy sentences. Be specific. State what the consensus is and WHY. Mention standout praise or criticism.",
+  "summary": "2-3 punchy sentences. Be specific. State what the consensus is and WHY. Mention standout praise or criticism. Do NOT mention specific numeric scores or ratings from any source.",
   "pros": ["pro 1 (max 8 words)", "pro 2", "pro 3", "pro 4"],
   "cons": ["con 1 (max 8 words)", "con 2"]
 }}"""
