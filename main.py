@@ -156,6 +156,10 @@ GAME_KW    = {"game","ps5","xbox","nintendo","steam","playstation","pokemon",
 MUSIC_KW   = {"album","song","artist","band","track","ep","lp","mixtape","single","discography"}
 BOOK_KW    = {"book","novel","author","memoir","biography","fiction","nonfiction","trilogy"}
 MOVIE_KW   = {"movie","film","cinema","director","sequel","prequel","box office","series","show","season"}
+CAR_KW     = {"car","suv","truck","sedan","coupe","hatchback","convertible","minivan","pickup",
+               "horsepower","mpg","torque","0-60","turbo","hybrid","electric vehicle",
+               "toyota","honda","ford","chevrolet","bmw","mercedes","audi","tesla",
+               "hyundai","kia","nissan","volkswagen","subaru","mazda","porsche","lexus"}
 
 def detect_category(query: str) -> str:
     q = query.lower()
@@ -167,6 +171,8 @@ def detect_category(query: str) -> str:
         if kw in q: return "book"
     for kw in MOVIE_KW:
         if kw in q: return "movie"
+    for kw in CAR_KW:
+        if kw in q: return "car"
     return "auto"
 
 # âââ SCRAPERS ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
@@ -938,6 +944,251 @@ async def score_gamespot(title: str, client: httpx.AsyncClient) -> dict | None:
     return None
 
 
+# ─── POLYGON SCRAPER ───────────────────────────────────────────────────────────
+async def score_polygon(title: str, category: str, client: httpx.AsyncClient) -> dict | None:
+    """Polygon review score. Tries direct slug URL then falls back to search."""
+    try:
+        slug = re.sub(r"[^a-z0-9\s-]", "", title.lower()).strip()
+        slug = re.sub(r"[\s_]+", "-", slug).strip("-")
+        if category == "game":
+            urls = [f"https://www.polygon.com/reviews/game/{slug}",
+                    f"https://www.polygon.com/game/{slug}"]
+        elif category in ("movie", "tv"):
+            urls = [f"https://www.polygon.com/reviews/{slug}",
+                    f"https://www.polygon.com/movie/{slug}"]
+        else:
+            return None
+        for url in urls:
+            try:
+                r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+                if r.status_code != 200:
+                    continue
+                soup = BeautifulSoup(r.text, "html.parser")
+                # JSON-LD first
+                for ld_tag in soup.find_all("script", type="application/ld+json"):
+                    try:
+                        ld = json.loads(ld_tag.string or "")
+                        rat = ld.get("reviewRating") or ld.get("aggregateRating") or {}
+                        val = rat.get("ratingValue")
+                        best = rat.get("bestRating", 10)
+                        if val:
+                            return build_source("Polygon", "Expert", "&#128308;", "#ff4713",
+                                                str(val), str(best))
+                    except Exception:
+                        continue
+                # Regex fallback
+                m = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', r.text)
+                best_m = re.search(r'"bestRating"\s*:\s*"?([\d.]+)"?', r.text)
+                if m:
+                    return build_source("Polygon", "Expert", "&#128308;", "#ff4713",
+                                        m.group(1), best_m.group(1) if best_m else "10")
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+# ─── CAR SCRAPERS ──────────────────────────────────────────────────────────────
+async def score_nhtsa_safety(year: str, make: str, model: str, client: httpx.AsyncClient) -> dict | None:
+    """NHTSA 5-star safety rating (free official API)."""
+    try:
+        if not year or not make or not model:
+            return None
+        r = await client.get(
+            f"https://api.nhtsa.gov/SafetyRatings/modelyear/{year}/make/{make}/model/{model}",
+            timeout=8,
+        )
+        data = r.json().get("Results", [])
+        if not data:
+            return None
+        overall = data[0].get("OverallRating") or data[0].get("VehicleDescription", "")
+        if not overall or overall == "Not Rated":
+            return None
+        return build_source("NHTSA Safety", "Expert", "&#128737;", "#002868",
+                             str(overall), "5", reviews="Gov't crash tests")
+    except Exception:
+        return None
+
+
+async def score_edmunds(year: str, make: str, model: str, client: httpx.AsyncClient) -> dict | None:
+    """Edmunds expert rating (0-10)."""
+    try:
+        make_slug  = re.sub(r"[^a-z0-9]", "", make.lower())
+        model_slug = re.sub(r"[^a-z0-9-]", "", model.lower().replace(" ", "-"))
+        url = f"https://www.edmunds.com/{make_slug}/{model_slug}/{year}/review/"
+        r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+        if r.status_code != 200:
+            return None
+        soup = BeautifulSoup(r.text, "html.parser")
+        # JSON-LD
+        for ld_tag in soup.find_all("script", type="application/ld+json"):
+            try:
+                ld = json.loads(ld_tag.string or "")
+                rat = ld.get("reviewRating") or ld.get("aggregateRating") or {}
+                val = rat.get("ratingValue")
+                best = rat.get("bestRating", 10)
+                if val:
+                    return build_source("Edmunds", "Expert", "&#127775;", "#0f6ab4",
+                                        str(val), str(best))
+            except Exception:
+                continue
+        # Regex fallback
+        m = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', r.text)
+        if m:
+            return build_source("Edmunds", "Expert", "&#127775;", "#0f6ab4", m.group(1), "10")
+    except Exception:
+        pass
+    return None
+
+
+async def score_caranddriver(year: str, make: str, model: str, client: httpx.AsyncClient) -> dict | None:
+    """Car and Driver road-test rating."""
+    try:
+        make_slug  = re.sub(r"[^a-z0-9-]", "", make.lower().replace(" ", "-"))
+        model_slug = re.sub(r"[^a-z0-9-]", "", model.lower().replace(" ", "-"))
+        url = f"https://www.caranddriver.com/{make_slug}/{model_slug}-review"
+        r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+        if r.status_code != 200:
+            return None
+        soup = BeautifulSoup(r.text, "html.parser")
+        for ld_tag in soup.find_all("script", type="application/ld+json"):
+            try:
+                ld = json.loads(ld_tag.string or "")
+                rat = ld.get("reviewRating") or ld.get("aggregateRating") or {}
+                val = rat.get("ratingValue")
+                best = rat.get("bestRating", 10)
+                if val:
+                    return build_source("Car and Driver", "Expert", "&#127941;", "#d0021b",
+                                        str(val), str(best))
+            except Exception:
+                continue
+        m = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', r.text)
+        if m:
+            return build_source("Car and Driver", "Expert", "&#127941;", "#d0021b", m.group(1), "10")
+    except Exception:
+        pass
+    return None
+
+
+async def score_motortrend(year: str, make: str, model: str, client: httpx.AsyncClient) -> dict | None:
+    """MotorTrend review rating."""
+    try:
+        make_slug  = re.sub(r"[^a-z0-9-]", "", make.lower().replace(" ", "-"))
+        model_slug = re.sub(r"[^a-z0-9-]", "", model.lower().replace(" ", "-"))
+        url = f"https://www.motortrend.com/cars/{make_slug}/{model_slug}/review/"
+        r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+        if r.status_code != 200:
+            url = f"https://www.motortrend.com/cars/{make_slug}/{year}/{model_slug}-review/"
+            r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+        if r.status_code != 200:
+            return None
+        soup = BeautifulSoup(r.text, "html.parser")
+        for ld_tag in soup.find_all("script", type="application/ld+json"):
+            try:
+                ld = json.loads(ld_tag.string or "")
+                rat = ld.get("reviewRating") or ld.get("aggregateRating") or {}
+                val = rat.get("ratingValue")
+                best = rat.get("bestRating", 10)
+                if val:
+                    return build_source("MotorTrend", "Expert", "&#128664;", "#e8000d",
+                                        str(val), str(best))
+            except Exception:
+                continue
+        m = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', r.text)
+        if m:
+            return build_source("MotorTrend", "Expert", "&#128664;", "#e8000d", m.group(1), "10")
+    except Exception:
+        pass
+    return None
+
+
+# ─── CANDIDATE SEARCH — CARS ───────────────────────────────────────────────────
+_CAR_MAKES = [
+    "acura","alfa romeo","aston martin","audi","bentley","bmw","buick","cadillac",
+    "chevrolet","chrysler","dodge","ferrari","fiat","ford","genesis","gmc","honda",
+    "hyundai","infiniti","jaguar","jeep","kia","lamborghini","land rover","lexus",
+    "lincoln","lotus","maserati","mazda","mclaren","mercedes-benz","mini","mitsubishi",
+    "nissan","porsche","ram","rolls-royce","subaru","tesla","toyota","volkswagen","volvo",
+]
+
+async def candidates_cars(query: str, client: httpx.AsyncClient) -> list:
+    """Search NHTSA vehicle database for car candidates."""
+    try:
+        q = query.lower().strip()
+        year_m = re.search(r'\b(19[5-9]\d|20[0-2]\d)\b', q)
+        year   = year_m.group() if year_m else str(__import__('datetime').datetime.now().year - 1)
+        q_no_year = re.sub(r'\b(19|20)\d{2}\b', '', q).strip()
+
+        found_make = next((m for m in _CAR_MAKES if m in q_no_year), None)
+        if not found_make:
+            # Try partial match on first word
+            first_word = q_no_year.split()[0] if q_no_year.split() else ""
+            found_make = next((m for m in _CAR_MAKES if m.startswith(first_word) or first_word in m), None)
+        if not found_make:
+            return []
+
+        model_q = q_no_year.replace(found_make, "").strip()
+        r = await client.get(
+            f"https://api.nhtsa.gov/vehicles/GetModelsForMake/{found_make}",
+            params={"format": "json"},
+            timeout=8,
+        )
+        models = r.json().get("Results", [])
+        if model_q:
+            models = [m for m in models if model_q in m.get("Model_Name", "").lower()]
+
+        results = []
+        for m in models[:8]:
+            make  = m.get("Make_Name", found_make.title())
+            model = m.get("Model_Name", "")
+            car_id = f"{year}:{make.lower().replace(' ','-')}:{model.lower().replace(' ','-')}"
+            results.append({
+                "id":        car_id,
+                "category":  "car",
+                "title":     f"{year} {make} {model}",
+                "year":      year,
+                "image_url": None,
+                "subtitle":  f"{make} · {year}",
+            })
+        return results
+    except Exception:
+        return []
+
+
+# ─── FULL SCORE — CAR ──────────────────────────────────────────────────────────
+async def score_car_by_id(car_id: str, client: httpx.AsyncClient) -> dict | None:
+    """Score a car given id = 'year:make:model' (URL-encoded colons as %3A are fine)."""
+    try:
+        parts = car_id.replace("%3A", ":").split(":", 2)
+        if len(parts) < 3:
+            return None
+        year  = parts[0]
+        make  = parts[1].replace("-", " ").title()
+        model = parts[2].replace("-", " ").title()
+
+        sources_raw = await asyncio.gather(
+            score_nhtsa_safety(year, make, model, client),
+            score_edmunds(year, make, model, client),
+            score_caranddriver(year, make, model, client),
+            score_motortrend(year, make, model, client),
+            return_exceptions=True,
+        )
+        sources = [s for s in sources_raw if s and not isinstance(s, Exception)]
+
+        return {
+            "title":     f"{year} {make} {model}",
+            "subtitle":  f"{make} · {year}",
+            "category":  "car",
+            "image_url": None,
+            "year":      year,
+            "overview":  f"{year} {make} {model} — expert reviews and safety ratings from top automotive sources.",
+            "sources":   sources,
+        }
+    except Exception:
+        return None
+
+
 async def score_rawg_by_id(game_id: str, client: httpx.AsyncClient) -> dict | None:
     if not RAWG_API_KEY:
         return None
@@ -993,6 +1244,7 @@ async def score_rawg_by_id(game_id: str, client: httpx.AsyncClient) -> dict | No
             score_steam(game_id, client),
             score_ign(game_name, "game", client),
             score_gamespot(game_name, client),
+            score_polygon(game_name, "game", client),
             return_exceptions=True,
         )
         for s in extra_game:
@@ -1050,6 +1302,7 @@ async def score_tmdb_by_id(item_id: str, media_type: str, client: httpx.AsyncCli
             score_rogerebert(title, year, client),
             score_letterboxd(title, year, client),
             score_ign(title, category, client),
+            score_polygon(title, category, client),
             return_exceptions=True,
         )
         for s in extra:
@@ -1462,7 +1715,7 @@ async def finalize(result: dict) -> dict:
 @app.get("/candidates")
 async def get_candidates(
     q:        str = Query(..., min_length=2, description="Search query"),
-    category: str = Query("auto", description="Filter: auto | game | movie | tv | music | book"),
+    category: str = Query("auto", description="Filter: auto | game | movie | tv | music | book | car"),
 ):
     """
     Fast candidate lookup â returns title, year, poster, category for top matches.
@@ -1478,6 +1731,8 @@ async def get_candidates(
             tasks.append(candidates_books(q, client))
         if category in ("music", "auto"):
             tasks.append(candidates_music(q, client))
+        if category in ("car",):
+            tasks.append(candidates_cars(q, client))
 
         lists = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -1528,6 +1783,8 @@ async def score_by_id(
             result = await score_book_by_id(id, client)
         elif category == "music":
             result = await score_music_by_id(id, client)
+        elif category == "car":
+            result = await score_car_by_id(id, client)
 
         if not result:
             raise HTTPException(
