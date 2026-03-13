@@ -516,37 +516,60 @@ async def score_steam(rawg_id: str, client: httpx.AsyncClient) -> dict | None:
 
 
 async def score_rogerebert(title: str, year: str, client: httpx.AsyncClient) -> dict | None:
-    """Roger Ebert / RogerEbert.com â JSON-LD star rating (0â4)."""
+    """Roger Ebert / RogerEbert.com — star rating (0–4 stars)."""
+    def _parse_ebert(html: str):
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            for ld_tag in soup.find_all("script", type="application/ld+json"):
+                try:
+                    ld = json.loads(ld_tag.string or "")
+                    items = [ld] if isinstance(ld, dict) else (ld.get("@graph") or [])
+                    for item in items:
+                        rat = item.get("reviewRating") or {}
+                        if isinstance(rat, dict):
+                            rv = rat.get("ratingValue")
+                            best = rat.get("bestRating", "4")
+                            if rv:
+                                return build_source("Roger Ebert", "Expert", "&#127921;", "#c0392b", str(rv), str(best))
+                        if item.get("ratingValue"):
+                            return build_source("Roger Ebert", "Expert", "&#127921;", "#c0392b", str(item["ratingValue"]), "4")
+                except Exception:
+                    pass
+            m = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', html)
+            best = re.search(r'"bestRating"\s*:\s*"?([\d.]+)"?', html)
+            if m:
+                return build_source("Roger Ebert", "Expert", "&#127921;", "#c0392b", m.group(1), best.group(1) if best else "4")
+        except Exception:
+            pass
+        return None
     try:
         slug = re.sub(r"[^a-z0-9\s-]", "", title.lower()).strip().replace(" ", "-")
-        urls = [f"https://www.rogerebert.com/reviews/{slug}-{year}" if year else None,
-                f"https://www.rogerebert.com/reviews/{slug}"]
+        slug_no_article = re.sub(r"^the-|^a-|^an-", "", slug)
+        urls = []
+        if year:
+            urls.append(f"https://www.rogerebert.com/reviews/{slug}-{year}")
+            if slug_no_article != slug:
+                urls.append(f"https://www.rogerebert.com/reviews/{slug_no_article}-{year}")
+        urls.append(f"https://www.rogerebert.com/reviews/{slug}")
+        if slug_no_article != slug:
+            urls.append(f"https://www.rogerebert.com/reviews/{slug_no_article}")
         for url in urls:
-            if not url:
-                continue
+            html = await cf_fetch(url, client)
+            if html:
+                result = _parse_ebert(html)
+                if result:
+                    return result
             try:
                 r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
-                if r.status_code != 200:
-                    continue
-                soup = BeautifulSoup(r.text, "html.parser")
-                for ld_tag in soup.find_all("script", type="application/ld+json"):
-                    try:
-                        ld  = json.loads(ld_tag.string)
-                        rat = ld.get("reviewRating") or ld.get("aggregateRating") or {}
-                        val  = rat.get("ratingValue")
-                        best = rat.get("bestRating", 4)
-                        if val is not None:
-                            return build_source(
-                                "Roger Ebert", "Expert", "&#127902;", "#cc0000",
-                                str(val), str(best),
-                            )
-                    except Exception:
-                        continue
+                if r.status_code == 200:
+                    result = _parse_ebert(r.text)
+                    if result:
+                        return result
             except Exception:
-                continue
-        return None
+                pass
     except Exception:
-        return None
+        pass
+    return None
 
 
 async def score_letterboxd(title: str, year: str, client: httpx.AsyncClient) -> dict | None:
