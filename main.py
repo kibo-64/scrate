@@ -558,17 +558,49 @@ async def score_rogerebert(title: str, year: str, client: httpx.AsyncClient) -> 
             urls.append(f"https://www.rogerebert.com/reviews/{slug_no_article}")
         for url in urls:
             print(f"[EBERT] Trying: {url}")
-            html = await cf_fetch(url, client)
-            if html:
-                print(f"[EBERT] cf_fetch OK len={len(html)}")
-                result = _parse_ebert(html)
+            # Enhanced cf_fetch: allow stylesheets, wait for JSON-LD, networkidle
+            ebert_html = None
+            if CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN:
+                try:
+                    cfr = await client.post(
+                        f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/browser-rendering/content",
+                        headers={
+                            "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "url": url,
+                            "rejectResourceTypes": ["image", "font", "media"],
+                            "gotoOptions": {"waitUntil": "networkidle0"},
+                        },
+                        timeout=45,
+                    )
+                    print(f"[EBERT] CF API status={cfr.status_code} len={len(cfr.text)}")
+                    if cfr.status_code == 200:
+                        ct = cfr.headers.get("content-type", "")
+                        if "json" in ct:
+                            cfd = cfr.json()
+                            ebert_html = (
+                                cfd.get("result", {}).get("content")
+                                or cfd.get("result")
+                                or cfd.get("content")
+                                or cfr.text
+                            )
+                        else:
+                            ebert_html = cfr.text
+                except Exception as e:
+                    print(f"[EBERT] CF API error: {e}")
+            if ebert_html:
+                print(f"[EBERT] Got HTML len={len(ebert_html)}")
+                result = _parse_ebert(ebert_html)
                 if result:
                     print(f"[EBERT] FOUND via cf_fetch")
                     return result
                 else:
                     print(f"[EBERT] parse failed on cf_fetch html")
             else:
-                print(f"[EBERT] cf_fetch None")
+                print(f"[EBERT] cf_fetch got nothing")
+            # Fallback: direct GET
             try:
                 r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
                 print(f"[EBERT] GET status={r.status_code} len={len(r.text)}")
