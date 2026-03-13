@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Scrawl — Consensus on everything.</title>
-  <meta name="description" content="Search any product, movie, game, album, or book. Scrawl aggregates every review and gives you one Consensus." />
+  <title>Scrawl — OmniScore everything.</title>
+  <meta name="description" content="Search any product, movie, game, album, or book. Scrawl aggregates every review and gives you one OmniScore." />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -854,7 +854,7 @@
   <div class="load-steps" id="loadSteps">
     <div class="load-step" id="s1"><div class="step-dot"></div>Detecting category</div>
     <div class="load-step" id="s2"><div class="step-dot"></div>Fetching scores from all sources</div>
-    <div class="load-step" id="s3"><div class="step-dot"></div>Calculating Consensus</div>
+    <div class="load-step" id="s3"><div class="step-dot"></div>Calculating OmniScore</div>
     <div class="load-step" id="s4"><div class="step-dot"></div>Generating AI summary</div>
   </div>
 </div>
@@ -1147,8 +1147,8 @@
 
   function render(query, d){
     _currentData = d;
-    const sc     = scoreClass(d.consensus||0);
-    const offset = ringOffset(d.consensus||0);
+    const sc     = scoreClass(d.omniscore||0);
+    const offset = ringOffset(d.omniscore||0);
 
     const imgHTML = d.image_url
       ? `<img class="product-img" src="${d.image_url}" alt="${escHtml(d.title)}" loading="lazy"
@@ -1179,11 +1179,11 @@
               <circle class="ring-fill r-${sc}" id="ringFill" cx="50" cy="50" r="45" stroke-dashoffset="${offset}"/>
             </svg>
             <div class="omni-label">
-              <div class="omni-num c-${sc}">${d.consensus??'—'}</div>
+              <div class="omni-num c-${sc}">${d.omniscore??'—'}</div>
               <div class="omni-max">/100</div>
             </div>
           </div>
-          <div class="omni-tag">General Consensus</div>
+          <div class="omni-tag">OmniScore</div>
         </div>
 
         <!-- PRODUCT INFO -->
