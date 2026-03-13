@@ -1054,60 +1054,97 @@ async def score_edmunds(year: str, make: str, model: str, client: httpx.AsyncCli
 
 async def score_caranddriver(year: str, make: str, model: str, client: httpx.AsyncClient) -> dict | None:
     """Car and Driver road-test rating."""
+    def _parse_cd(html: str):
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            for ld_tag in soup.find_all("script", type="application/ld+json"):
+                try:
+                    ld = json.loads(ld_tag.string or "")
+                    items = [ld] if isinstance(ld, dict) else (ld.get("@graph") or [])
+                    for item in items:
+                        rat = item.get("reviewRating") or item.get("ratingValue")
+                        if isinstance(rat, dict):
+                            rat = rat.get("ratingValue")
+                        if rat:
+                            return build_source("Car and Driver", "Expert", "&#127941;", "#d0021b", str(rat), "10")
+                except Exception:
+                    pass
+            m = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', html)
+            if m:
+                return build_source("Car and Driver", "Expert", "&#127941;", "#d0021b", m.group(1), "10")
+        except Exception:
+            pass
+        return None
     try:
         make_slug  = re.sub(r"[^a-z0-9-]", "", make.lower().replace(" ", "-"))
         model_slug = re.sub(r"[^a-z0-9-]", "", model.lower().replace(" ", "-"))
-        url = f"https://www.caranddriver.com/{make_slug}/{model_slug}-review"
-        r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
-        if r.status_code != 200:
-            return None
-        soup = BeautifulSoup(r.text, "html.parser")
-        for ld_tag in soup.find_all("script", type="application/ld+json"):
+        urls = [
+            f"https://www.caranddriver.com/{make_slug}/{model_slug}-review",
+            f"https://www.caranddriver.com/{make_slug}/{model_slug}",
+        ]
+        for url in urls:
+            html = await cf_fetch(url, client)
+            if html:
+                result = _parse_cd(html)
+                if result:
+                    return result
             try:
-                ld = json.loads(ld_tag.string or "")
-                rat = ld.get("reviewRating") or ld.get("aggregateRating") or {}
-                val = rat.get("ratingValue")
-                best = rat.get("bestRating", 10)
-                if val:
-                    return build_source("Car and Driver", "Expert", "&#127941;", "#d0021b",
-                                        str(val), str(best))
+                r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+                if r.status_code == 200:
+                    result = _parse_cd(r.text)
+                    if result:
+                        return result
             except Exception:
-                continue
-        m = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', r.text)
-        if m:
-            return build_source("Car and Driver", "Expert", "&#127941;", "#d0021b", m.group(1), "10")
+                pass
     except Exception:
         pass
     return None
 
-
 async def score_motortrend(year: str, make: str, model: str, client: httpx.AsyncClient) -> dict | None:
     """MotorTrend review rating."""
+    def _parse_mt(html: str):
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            for ld_tag in soup.find_all("script", type="application/ld+json"):
+                try:
+                    ld = json.loads(ld_tag.string or "")
+                    items = [ld] if isinstance(ld, dict) else (ld.get("@graph") or [])
+                    for item in items:
+                        rat = item.get("reviewRating") or item.get("ratingValue")
+                        if isinstance(rat, dict):
+                            rat = rat.get("ratingValue")
+                        if rat:
+                            return build_source("MotorTrend", "Expert", "&#128664;", "#e8000d", str(rat), "10")
+                except Exception:
+                    pass
+            m = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', html)
+            if m:
+                return build_source("MotorTrend", "Expert", "&#128664;", "#e8000d", m.group(1), "10")
+        except Exception:
+            pass
+        return None
     try:
         make_slug  = re.sub(r"[^a-z0-9-]", "", make.lower().replace(" ", "-"))
         model_slug = re.sub(r"[^a-z0-9-]", "", model.lower().replace(" ", "-"))
-        url = f"https://www.motortrend.com/cars/{make_slug}/{model_slug}/review/"
-        r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
-        if r.status_code != 200:
-            url = f"https://www.motortrend.com/cars/{make_slug}/{year}/{model_slug}-review/"
-            r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
-        if r.status_code != 200:
-            return None
-        soup = BeautifulSoup(r.text, "html.parser")
-        for ld_tag in soup.find_all("script", type="application/ld+json"):
+        urls = [
+            f"https://www.motortrend.com/cars/{make_slug}/{model_slug}/review/",
+            f"https://www.motortrend.com/cars/{make_slug}/{year}/{model_slug}-review/",
+            f"https://www.motortrend.com/cars/{make_slug}/{model_slug}/",
+        ]
+        for url in urls:
+            html = await cf_fetch(url, client)
+            if html:
+                result = _parse_mt(html)
+                if result:
+                    return result
             try:
-                ld = json.loads(ld_tag.string or "")
-                rat = ld.get("reviewRating") or ld.get("aggregateRating") or {}
-                val = rat.get("ratingValue")
-                best = rat.get("bestRating", 10)
-                if val:
-                    return build_source("MotorTrend", "Expert", "&#128664;", "#e8000d",
-                                        str(val), str(best))
+                r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+                if r.status_code == 200:
+                    result = _parse_mt(r.text)
+                    if result:
+                        return result
             except Exception:
-                continue
-        m = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', r.text)
-        if m:
-            return build_source("MotorTrend", "Expert", "&#128664;", "#e8000d", m.group(1), "10")
+                pass
     except Exception:
         pass
     return None
