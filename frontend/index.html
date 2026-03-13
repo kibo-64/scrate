@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Scrawl — OmniScore everything.</title>
   <meta name="description" content="Search any product, movie, game, album, or book. Scrawl aggregates every review and gives you one OmniScore." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg:       #0c0c11;
@@ -44,7 +47,7 @@
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-family: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
       min-height: 100vh;
       transition: background .25s, color .25s;
     }
@@ -573,11 +576,103 @@
     [data-theme="light"] .pro-box, [data-theme="light"] .con-box { box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
     [data-theme="light"] .hero-badge { background: rgba(99,85,232,0.08); }
     [data-theme="light"] .search-box, [data-theme="light"] .nav-search-box { box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
+
+    /* ═══ NEXT-GEN VISUAL LAYER ═══ */
+
+    /* canvas + fixed layers */
+    #pc{position:fixed;inset:0;pointer-events:none;z-index:0;}
+    #cg{position:fixed;width:500px;height:500px;border-radius:50%;pointer-events:none;z-index:0;
+        background:radial-gradient(circle,rgba(124,111,255,0.07) 0%,transparent 65%);
+        will-change:transform;top:0;left:0;}
+
+    /* Aurora blobs */
+    .au{position:fixed;border-radius:50%;filter:blur(90px);pointer-events:none;z-index:0;}
+    .au1{width:650px;height:650px;background:radial-gradient(circle,rgba(124,111,255,0.22) 0%,transparent 60%);
+         top:-200px;left:-150px;animation:au1 16s ease-in-out infinite;}
+    .au2{width:550px;height:550px;background:radial-gradient(circle,rgba(96,165,250,0.15) 0%,transparent 60%);
+         bottom:-150px;right:-100px;animation:au2 20s ease-in-out infinite;}
+    .au3{width:350px;height:350px;background:radial-gradient(circle,rgba(52,211,153,0.12) 0%,transparent 60%);
+         top:45%;left:55%;animation:au3 13s ease-in-out infinite;}
+    @keyframes au1{0%,100%{transform:translate(0,0) scale(1);}50%{transform:translate(70px,50px) scale(1.12);}}
+    @keyframes au2{0%,100%{transform:translate(0,0) scale(1);}50%{transform:translate(-60px,70px) scale(0.92);}}
+    @keyframes au3{0%,100%{transform:translate(0,0);}40%{transform:translate(40px,-30px) scale(1.1);}80%{transform:translate(-25px,35px) scale(0.95);}}
+
+    /* Ensure content sits above bg layers */
+    nav,main,footer,.hero,.product-hero{position:relative;z-index:1;}
+
+    /* ── FADE-UP ENTRANCE ── */
+    .fade-up{opacity:0;transform:translateY(32px);transition:opacity 0.75s cubic-bezier(.16,1,.3,1),transform 0.75s cubic-bezier(.16,1,.3,1);}
+    .fade-up.visible{opacity:1;transform:translateY(0);}
+
+    /* ── HERO BADGE rainbow shimmer ── */
+    .hero-badge{
+      font-size:11px !important;font-weight:700 !important;letter-spacing:0.2em !important;
+      background:linear-gradient(90deg,#a78bfa,#60a5fa,#34d399,#f472b6,#fb923c,#a78bfa) !important;
+      background-size:300% auto !important;
+      -webkit-background-clip:text !important;-webkit-text-fill-color:transparent !important;
+      background-clip:text !important;
+      border:none !important;padding:2px 0 !important;
+      animation:badgeShimmer 3s linear infinite;
+    }
+    @keyframes badgeShimmer{0%{background-position:0% center;}100%{background-position:300% center;}}
+
+    /* ── HERO H1 word color wave ── */
+    .hero-h1{line-height:1.08 !important;letter-spacing:-0.02em;}
+    .hero-h1 .w1,.hero-h1 .w2,.hero-h1 .w3,.hero-h1 .w4{
+      display:inline-block;
+      background:linear-gradient(135deg,var(--text) 0%,#a78bfa 50%,var(--text) 100%);
+      background-size:200% auto;
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+      background-clip:text;
+      animation:wordWave 4s ease-in-out infinite alternate;
+    }
+    .hero-h1 .w1{animation-delay:0s;}
+    .hero-h1 .w2{animation-delay:0.4s;--wc:#60a5fa;}
+    .hero-h1 .w3{animation-delay:0.8s;--wc:#34d399;}
+    .hero-h1 .w4{animation-delay:1.2s;--wc:#f472b6;}
+    .hero-h1 .w2{background-image:linear-gradient(135deg,var(--text) 0%,#60a5fa 50%,var(--text) 100%);}
+    .hero-h1 .w3{background-image:linear-gradient(135deg,var(--text) 0%,#34d399 50%,var(--text) 100%);}
+    .hero-h1 .w4{background-image:linear-gradient(135deg,var(--text) 0%,#f472b6 50%,var(--text) 100%);}
+    @keyframes wordWave{0%{background-position:0% center;}100%{background-position:200% center;}}
+
+    [data-theme="light"] .hero-h1 .w1{background-image:linear-gradient(135deg,#1a1a2e 0%,#6355e8 50%,#1a1a2e 100%);}
+    [data-theme="light"] .hero-h1 .w2{background-image:linear-gradient(135deg,#1a1a2e 0%,#2563eb 50%,#1a1a2e 100%);}
+    [data-theme="light"] .hero-h1 .w3{background-image:linear-gradient(135deg,#1a1a2e 0%,#059669 50%,#1a1a2e 100%);}
+    [data-theme="light"] .hero-h1 .w4{background-image:linear-gradient(135deg,#1a1a2e 0%,#db2777 50%,#1a1a2e 100%);}
+
+    /* ── LOGO scramble cursor ── */
+    .logo{cursor:default;font-family:'Space Grotesk',sans-serif;font-weight:700;letter-spacing:-0.03em;}
+
+    /* ── SEARCH box glow on focus ── */
+    .search-box:focus-within,.nav-search-box:focus-within{
+      border-color:var(--accent) !important;
+      box-shadow:0 0 0 3px rgba(124,111,255,0.18),0 4px 24px rgba(124,111,255,0.12) !important;
+    }
+    .search-btn{transition:transform 0.2s ease,box-shadow 0.2s ease !important;}
+    .search-btn:hover{box-shadow:0 8px 28px rgba(124,111,255,0.45) !important;transform:scale(1.02);}
+
+    /* ── Category + hero pills ── */
+    .cat-pill,.hero-pill{transition:transform 0.2s ease,box-shadow 0.2s ease !important;}
+    .cat-pill:hover,.hero-pill:hover{transform:translateY(-2px) scale(1.05) !important;box-shadow:0 4px 18px rgba(124,111,255,0.28) !important;}
+
+    /* ── Nav glass ── */
+    nav{backdrop-filter:blur(24px) saturate(200%) !important;-webkit-backdrop-filter:blur(24px) saturate(200%) !important;}
+
+    /* ── Theme switch in light mode aurora adjust ── */
+    [data-theme="light"] .au1{background:radial-gradient(circle,rgba(99,85,232,0.12) 0%,transparent 60%);}
+    [data-theme="light"] .au2{background:radial-gradient(circle,rgba(59,130,246,0.1) 0%,transparent 60%);}
+    [data-theme="light"] .au3{background:radial-gradient(circle,rgba(5,150,105,0.08) 0%,transparent 60%);}
+    [data-theme="light"] #pc{opacity:0.25;}
 </style>
 </head>
 <body>
 
 <!-- NAV -->
+<canvas id="pc"></canvas>
+<div id="cg"></div>
+<div class="au au1"></div>
+<div class="au au2"></div>
+<div class="au au3"></div>
 <nav>
   <div class="logo" onclick="goHome()">scrawl</div>
   <div class="nav-search" id="navSearch">
@@ -601,9 +696,9 @@
 
 <!-- HERO -->
 <div class="hero" id="hero">
-  <div class="hero-badge">✦ OmniScore — Every review. One truth.</div>
-  <h1>Scrawl it before<br/><span class="grad">you fall for it.</span></h1>
-  <p>Movies, games, albums, books, products — search anything and get one definitive OmniScore pulled from every major review source on the web.</p>
+  <div class="hero-badge fade-up" style="animation-delay:0.1s">✦ SEE EVERYTHING ABOUT ANYTHING ✦</div>
+  <h1 class="hero-h1 fade-up" style="animation-delay:0.25s"><span class="w1">Scrawl it</span> <span class="w2">before</span><br/><span class="w3">you fall</span> <span class="w4">for it.</span></h1>
+  <p class="fade-up" style="animation-delay:0.4s">Movies, games, albums, books, products — search anything and get one definitive OmniScore pulled from every major review source on the web.</p>
 
   <div class="search-wrap">
     <div class="search-box">
@@ -1065,6 +1160,117 @@
       : (_currentData?.sources||[]).filter(s=>s.type===type);
     document.getElementById("srcGrid").innerHTML = renderSources(sources);
   }
+
+
+  /* ═══ NEXT-GEN JS ═══ */
+
+  // ── 1. PARTICLE SYSTEM ──
+  (function(){
+    var canvas = document.getElementById('pc');
+    if(!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var W,H,mouse={x:-999,y:-999};
+    var COLS=['#7c6fff','#60a5fa','#a78bfa','#818cf8','#38bdf8','#34d399'];
+    function resize(){ W=canvas.width=window.innerWidth; H=canvas.height=window.innerHeight; }
+    resize(); window.addEventListener('resize',resize);
+    window.addEventListener('mousemove',function(e){ mouse.x=e.clientX; mouse.y=e.clientY; });
+    function Particle(){
+      this.x=Math.random()*W; this.y=Math.random()*H;
+      this.vx=(Math.random()-0.5)*0.5; this.vy=(Math.random()-0.5)*0.5;
+      this.r=Math.random()*1.8+0.4; this.a=Math.random()*0.45+0.1;
+      this.c=COLS[Math.floor(Math.random()*COLS.length)];
+    }
+    Particle.prototype.tick=function(){
+      var dx=mouse.x-this.x, dy=mouse.y-this.y, d=Math.sqrt(dx*dx+dy*dy);
+      if(d<200){ this.vx+=dx*0.00012; this.vy+=dy*0.00012; }
+      this.vx*=0.998; this.vy*=0.998;
+      var s=Math.sqrt(this.vx*this.vx+this.vy*this.vy);
+      if(s>1.3){ this.vx*=1.3/s; this.vy*=1.3/s; }
+      this.x+=this.vx; this.y+=this.vy;
+      if(this.x<0)this.x=W; if(this.x>W)this.x=0;
+      if(this.y<0)this.y=H; if(this.y>H)this.y=0;
+    };
+    var parts=[];
+    for(var i=0;i<100;i++) parts.push(new Particle());
+    function links(){
+      var MAX=140;
+      for(var i=0;i<parts.length;i++){
+        for(var j=i+1;j<parts.length;j++){
+          var dx=parts[i].x-parts[j].x, dy=parts[i].y-parts[j].y, d=Math.sqrt(dx*dx+dy*dy);
+          if(d<MAX){
+            ctx.globalAlpha=(1-d/MAX)*0.13;
+            ctx.strokeStyle='#7c6fff'; ctx.lineWidth=0.7;
+            ctx.beginPath(); ctx.moveTo(parts[i].x,parts[i].y);
+            ctx.lineTo(parts[j].x,parts[j].y); ctx.stroke();
+          }
+        }
+      }
+    }
+    function loop(){
+      ctx.clearRect(0,0,W,H);
+      parts.forEach(function(p){ p.tick(); ctx.globalAlpha=p.a; ctx.fillStyle=p.c; ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill(); });
+      links(); ctx.globalAlpha=1;
+      requestAnimationFrame(loop);
+    }
+    loop();
+  })();
+
+  // ── 2. CURSOR GLOW (smooth follow) ──
+  (function(){
+    var el=document.getElementById('cg');
+    if(!el) return;
+    var tx=window.innerWidth/2,ty=window.innerHeight/2,cx=tx,cy=ty;
+    document.addEventListener('mousemove',function(e){ tx=e.clientX; ty=e.clientY; });
+    function lerp(a,b,t){ return a+(b-a)*t; }
+    function tick(){ cx=lerp(cx,tx,0.07); cy=lerp(cy,ty,0.07);
+      el.style.transform='translate('+(cx-250)+'px,'+(cy-250)+'px)';
+      requestAnimationFrame(tick); }
+    tick();
+  })();
+
+  // ── 3. ENTRANCE ANIMATIONS ──
+  (function(){
+    var items=document.querySelectorAll('.fade-up');
+    var obs=new IntersectionObserver(function(entries){
+      entries.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('visible'); obs.unobserve(e.target); } });
+    },{threshold:0.05});
+    items.forEach(function(el){ obs.observe(el); });
+    // Also trigger immediately for elements already in view
+    setTimeout(function(){ items.forEach(function(el){ var r=el.getBoundingClientRect(); if(r.top<window.innerHeight) el.classList.add('visible'); }); },50);
+  })();
+
+  // ── 4. LOGO SCRAMBLE on hover ──
+  (function(){
+    var logo=document.querySelector('.logo');
+    if(!logo) return;
+    var chars='abcdefghijklmnopqrstuvwxyz';
+    var orig=logo.textContent;
+    var running=false, timer;
+    logo.addEventListener('mouseenter',function(){
+      if(running) return; running=true; var iters=0;
+      timer=setInterval(function(){
+        logo.textContent=orig.split('').map(function(c,i){
+          return i<Math.floor(iters)?orig[i]:chars[Math.floor(Math.random()*chars.length)];
+        }).join('');
+        iters+=0.45;
+        if(iters>orig.length){ clearInterval(timer); logo.textContent=orig; running=false; }
+      },35);
+    });
+  })();
+
+  // ── 5. MAGNETIC "Scrawl it" BUTTON ──
+  (function(){
+    var btn=document.querySelector('.search-btn');
+    if(!btn) return;
+    btn.addEventListener('mousemove',function(e){
+      var r=btn.getBoundingClientRect();
+      var x=(e.clientX-r.left-r.width/2)*0.25;
+      var y=(e.clientY-r.top-r.height/2)*0.25;
+      btn.style.transform='translate('+x+'px,'+y+'px) scale(1.02)';
+    });
+    btn.addEventListener('mouseleave',function(){ btn.style.transform=''; });
+  })();
+
 </script>
 </body>
 </html>
