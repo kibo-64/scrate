@@ -1864,63 +1864,102 @@ async def search_books(query: str, client: httpx.AsyncClient) -> dict | None:
 
 # ─── RESTAURANT SCRAPERS ────────────────────────────────────────────────────────
 
-async def candidates_restaurants(query: str, client: httpx.AsyncClient) -> list:
-    """Search Yelp for restaurant candidates."""
-    url = f"https://www.yelp.com/search?find_desc={quote(query)}&find_loc="
+async def _fetch_html(url: str, client: httpx.AsyncClient) -> str | None:
+    """Fetch HTML with browser-like headers. Falls back to cf_fetch."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
     try:
-        resp = await cf_fetch(url, client)
-        if not resp:
-            return []
-        candidates = []
-        # Try JSON-LD first
-        import re as _re
-        ld_blocks = _re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', resp, _re.S)
-        for block in ld_blocks:
-            try:
-                data = json.loads(block)
-                if isinstance(data, dict) and data.get("@type") == "ItemList":
-                    for item in data.get("itemListElement", [])[:8]:
-                        biz = item.get("itemReviewed") or item
-                        name = biz.get("name", "")
-                        addr = biz.get("address", {})
-                        city = addr.get("addressLocality", "") if isinstance(addr, dict) else ""
-                        rating = biz.get("aggregateRating", {}).get("ratingValue")
-                        image = biz.get("image") or ""
-                        if isinstance(image, list):
-                            image = image[0] if image else ""
-                        candidates.append({
-                            "id": f"{name}::{city}",
-                            "title": name,
-                            "category": "restaurant",
-                            "image_url": image,
-                            "year": city,
-                            "overview": f"Rating: {rating}/5" if rating else "",
-                            "sources": [],
-                        })
-            except json.JSONDecodeError:
-                continue
-        if candidates:
-            return candidates[:8]
-        # Fallback: regex scrape
-        biz_names = _re.findall(r'class="css-19v1rkv"[^>]*>(.*?)</a>', resp)
-        for name in biz_names[:8]:
-            clean = _re.sub(r'<[^>]+>', '', name).strip()
-            # Remove leading number+dot
-            clean = _re.sub(r'^\d+\.\s*', '', clean)
-            if clean:
+        r = await client.get(url, headers=headers, follow_redirects=True, timeout=15)
+        if r.status_code == 200 and len(r.text) > 500:
+            return r.text
+    except Exception:
+        pass
+    # Fallback to cf_fetch if available
+    return await cf_fetch(url, client)
+
+
+async def candidates_restaurants(query: str, client: httpx.AsyncClient) -> list:
+    """Search for restaurant candidates via Google search results."""
+    import re as _re
+    candidates = []
+
+    # Strategy 1: Google search for restaurants
+    google_url = f"https://www.google.com/search?q={quote(query + ' restaurant reviews')}&num=10"
+    try:
+        html = await _fetch_html(google_url, client)
+        if html:
+            # Extract restaurant names from Google search results
+            # Look for restaurant names in title tags and headings
+            titles = _re.findall(r'<h3[^>]*>(.*?)</h3>', html, _re.S)
+            seen = set()
+            for title in titles:
+                clean = _re.sub(r'<[^>]+>', '', title).strip()
+                # Filter out non-restaurant results
+                if not clean or len(clean) > 80 or len(clean) < 3:
+                    continue
+                # Remove common suffixes like "- Yelp", "- TripAdvisor", etc.
+                clean = _re.sub(r'\s*[-|].*?(Yelp|TripAdvisor|OpenTable|Google|Maps|Menu|Reviews|Prices).*$', '', clean, flags=_re.I).strip()
+                clean = _re.sub(r'\s*[-|]\s*\d+\s*photos?.*$', '', clean, flags=_re.I).strip()
+                if not clean or clean.lower() in seen or len(clean) < 3:
+                    continue
+                seen.add(clean.lower())
+                # Try to extract location from nearby text
+                loc_match = _re.search(r'(?:in|near|at)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', clean)
+                location = loc_match.group(1) if loc_match else ""
                 candidates.append({
-                    "id": f"{clean}::",
+                    "id": f"{clean}::{location}",
                     "title": clean,
                     "category": "restaurant",
                     "image_url": "",
-                    "year": "",
+                    "year": location,
                     "overview": "",
                     "sources": [],
                 })
-        return candidates[:8]
+                if len(candidates) >= 8:
+                    break
     except Exception as e:
-        logger.warning(f"candidates_restaurants error: {e}")
-        return []
+        logger.warning(f"candidates_restaurants google error: {e}")
+
+    # Strategy 2: Try Yelp search via cf_fetch or direct
+    if len(candidates) < 3:
+        yelp_url = f"https://www.yelp.com/search?find_desc={quote(query)}&find_loc="
+        try:
+            resp = await _fetch_html(yelp_url, client)
+            if resp:
+                ld_blocks = _re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', resp, _re.S)
+                for block in ld_blocks:
+                    try:
+                        data = json.loads(block)
+                        if isinstance(data, dict) and data.get("@type") == "ItemList":
+                            for item in data.get("itemListElement", [])[:8]:
+                                biz = item.get("itemReviewed") or item
+                                name = biz.get("name", "")
+                                if not name or name.lower() in {c["title"].lower() for c in candidates}:
+                                    continue
+                                addr = biz.get("address", {})
+                                city = addr.get("addressLocality", "") if isinstance(addr, dict) else ""
+                                rating = biz.get("aggregateRating", {}).get("ratingValue")
+                                image = biz.get("image") or ""
+                                if isinstance(image, list):
+                                    image = image[0] if image else ""
+                                candidates.append({
+                                    "id": f"{name}::{city}",
+                                    "title": name,
+                                    "category": "restaurant",
+                                    "image_url": image,
+                                    "year": city,
+                                    "overview": f"Rating: {rating}/5" if rating else "",
+                                    "sources": [],
+                                })
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            logger.warning(f"candidates_restaurants yelp error: {e}")
+
+    return candidates[:8]
 
 
 async def scrape_yelp_rating(name: str, location: str, client: httpx.AsyncClient) -> dict | None:
@@ -1929,7 +1968,7 @@ async def scrape_yelp_rating(name: str, location: str, client: httpx.AsyncClient
     search_q = f"{name} {location}".strip()
     url = f"https://www.yelp.com/search?find_desc={quote(search_q)}&find_loc={quote(location)}"
     try:
-        html = await cf_fetch(url, client)
+        html = await _fetch_html(url, client)
         if not html:
             return None
         # Try JSON-LD
@@ -1968,7 +2007,7 @@ async def scrape_tripadvisor_rating(name: str, location: str, client: httpx.Asyn
     search_q = f"site:tripadvisor.com {name} {location} restaurant"
     url = f"https://www.google.com/search?q={quote(search_q)}"
     try:
-        html = await cf_fetch(url, client)
+        html = await _fetch_html(url, client)
         if not html:
             return None
         # Look for rating in Google snippet
@@ -1980,7 +2019,7 @@ async def scrape_tripadvisor_rating(name: str, location: str, client: httpx.Asyn
         # Try fetching TripAdvisor page directly
         ta_link = _re.search(r'(https?://(?:www\.)?tripadvisor\.com/Restaurant_Review[^"&\s]+)', html)
         if ta_link:
-            ta_html = await cf_fetch(ta_link.group(1), client)
+            ta_html = await _fetch_html(ta_link.group(1), client)
             if ta_html:
                 rm = _re.search(r'"ratingValue"\s*:\s*"?(\d+\.?\d*)"?', ta_html)
                 rc = _re.search(r'"reviewCount"\s*:\s*"?(\d+)"?', ta_html)
@@ -2004,7 +2043,7 @@ async def scrape_google_reviews(name: str, location: str, client: httpx.AsyncCli
     search_q = f"{name} {location} restaurant reviews"
     url = f"https://www.google.com/search?q={quote(search_q)}"
     try:
-        html = await cf_fetch(url, client)
+        html = await _fetch_html(url, client)
         if not html:
             return None
         # Google knowledge panel rating
@@ -2033,7 +2072,7 @@ async def scrape_opentable_rating(name: str, location: str, client: httpx.AsyncC
     search_q = f"site:opentable.com {name} {location}"
     url = f"https://www.google.com/search?q={quote(search_q)}"
     try:
-        html = await cf_fetch(url, client)
+        html = await _fetch_html(url, client)
         if not html:
             return None
         m = _re.search(r'(\d+\.?\d*)\s*/\s*5.*?opentable', html, _re.I)
@@ -2042,7 +2081,7 @@ async def scrape_opentable_rating(name: str, location: str, client: httpx.AsyncC
         # Try fetching OT page
         ot_link = _re.search(r'(https?://(?:www\.)?opentable\.com/r/[^"&\s]+)', html)
         if ot_link:
-            ot_html = await cf_fetch(ot_link.group(1), client)
+            ot_html = await _fetch_html(ot_link.group(1), client)
             if ot_html:
                 rm = _re.search(r'"ratingValue"\s*:\s*"?(\d+\.?\d*)"?', ot_html)
                 if rm:
