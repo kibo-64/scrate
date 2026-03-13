@@ -991,18 +991,28 @@ async def score_polygon(title: str, category: str, client: httpx.AsyncClient) ->
 
 # ─── CAR SCRAPERS ──────────────────────────────────────────────────────────────
 async def score_nhtsa_safety(year: str, make: str, model: str, client: httpx.AsyncClient) -> dict | None:
-    """NHTSA 5-star safety rating (free official API)."""
+    """NHTSA 5-star safety rating — two-step: get VehicleId then fetch overall rating."""
     try:
         if not year or not make or not model:
             return None
-        r = await client.get(
+        # Step 1: find matching VehicleId(s)
+        r1 = await client.get(
             f"https://api.nhtsa.gov/SafetyRatings/modelyear/{year}/make/{make}/model/{model}",
             timeout=8,
         )
-        data = r.json().get("Results", [])
-        if not data:
+        vehicles = r1.json().get("Results", [])
+        if not vehicles:
             return None
-        overall = data[0].get("OverallRating") or data[0].get("VehicleDescription", "")
+        vehicle_id = vehicles[0].get("VehicleId")
+        if not vehicle_id:
+            return None
+        # Step 2: fetch detailed ratings for that vehicle
+        r2 = await client.get(
+            f"https://api.nhtsa.gov/SafetyRatings/VehicleId/{vehicle_id}",
+            timeout=8,
+        )
+        detail = (r2.json().get("Results") or [{}])[0]
+        overall = detail.get("OverallRating")
         if not overall or overall == "Not Rated":
             return None
         return build_source("NHTSA Safety", "Expert", "&#128737;", "#002868",
@@ -1130,7 +1140,7 @@ async def candidates_cars(query: str, client: httpx.AsyncClient) -> list:
 
         model_q = q_no_year.replace(found_make, "").strip()
         r = await client.get(
-            f"https://api.nhtsa.gov/vehicles/GetModelsForMake/{found_make}",
+            f"https://vpic.nhtsa.dot.gov/api/vehicles/GetModelsForMake/{found_make}",
             params={"format": "json"},
             timeout=8,
         )
@@ -1731,7 +1741,7 @@ async def get_candidates(
             tasks.append(candidates_books(q, client))
         if category in ("music", "auto"):
             tasks.append(candidates_music(q, client))
-        if category in ("car",):
+        if category == "car" or (category == "auto" and detect_category(q) == "car"):
             tasks.append(candidates_cars(q, client))
 
         lists = await asyncio.gather(*tasks, return_exceptions=True)
