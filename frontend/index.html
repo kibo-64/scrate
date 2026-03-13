@@ -663,6 +663,108 @@
     [data-theme="light"] .au2{background:radial-gradient(circle,rgba(59,130,246,0.1) 0%,transparent 60%);}
     [data-theme="light"] .au3{background:radial-gradient(circle,rgba(5,150,105,0.08) 0%,transparent 60%);}
     [data-theme="light"] #pc{opacity:0.25;}
+
+/* ===================== MOBILE RESPONSIVE ===================== */
+@media (max-width: 768px) {
+  /* NAV */
+  nav {
+    padding: 12px 20px;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .nav-links { display: none; }
+  .nav-search {
+    display: none !important;
+  }
+  .logo { font-size: 1.3rem; }
+  .theme-switch { width: 44px; height: 24px; }
+  .switch-thumb { width: 16px; height: 16px; }
+  [data-theme="light"] .switch-thumb { transform: translateX(20px); }
+
+  /* HERO */
+  .hero {
+    padding: 60px 20px 48px;
+    min-height: unset;
+  }
+  .hero-h1 {
+    font-size: clamp(2rem, 10vw, 3.2rem) !important;
+    line-height: 1.15 !important;
+  }
+  .hero-badge {
+    font-size: 9px !important;
+    letter-spacing: 0.15em !important;
+  }
+  .hero > p {
+    font-size: 0.95rem;
+    padding: 0 8px;
+  }
+
+  /* SEARCH */
+  .search-wrap { padding: 0 4px; }
+  .search-box {
+    flex-direction: column;
+    border-radius: 16px;
+    padding: 12px;
+    gap: 10px;
+  }
+  .search-box input {
+    width: 100%;
+    font-size: 1rem;
+  }
+  .search-btn {
+    width: 100%;
+    justify-content: center;
+    border-radius: 12px;
+  }
+
+  /* CATEGORY PILLS */
+  .cats {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0 16px;
+    justify-content: center;
+  }
+
+  /* TRENDING / GRID */
+  .trending-grid, .grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 12px;
+    padding: 0 16px;
+  }
+
+  /* AURORA BLOBS — scale down */
+  .au1 { width: 300px !important; height: 300px !important; top: -80px !important; left: -80px !important; }
+  .au2 { width: 250px !important; height: 250px !important; bottom: -60px !important; right: -60px !important; }
+  .au3 { width: 160px !important; height: 160px !important; }
+
+  /* PRODUCT PAGE */
+  .product-hero {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 24px 16px;
+    gap: 16px;
+  }
+  .product-hero img { width: 100%; max-width: 280px; border-radius: 16px; }
+  .product-info { padding: 0; }
+  .product-info h1 { font-size: 1.5rem; }
+  .criteria-list { grid-template-columns: 1fr !important; }
+  .review-list { padding: 0 16px; }
+}
+
+@media (max-width: 480px) {
+  nav { padding: 10px 14px; }
+  .hero { padding: 48px 14px 36px; }
+  .hero-h1 { font-size: clamp(1.75rem, 11vw, 2.8rem) !important; }
+  .trending-grid, .grid {
+    grid-template-columns: 1fr !important;
+  }
+  .search-box input { font-size: 0.95rem; }
+  .hero > p { font-size: 0.88rem; }
+  .au1 { width: 200px !important; height: 200px !important; }
+  .au2 { width: 180px !important; height: 180px !important; }
+  .au3 { display: none; }
+}
+/* ============================================================= */
 </style>
 </head>
 <body>
@@ -1191,7 +1293,7 @@
       if(this.y<0)this.y=H; if(this.y>H)this.y=0;
     };
     var parts=[];
-    for(var i=0;i<100;i++) parts.push(new Particle());
+    var isMobile=("ontouchstart" in window)||window.innerWidth<768; var PCOUNT=isMobile?28:100; for(var i=0;i<PCOUNT;i++) parts.push(new Particle());
     function links(){
       var MAX=140;
       for(var i=0;i<parts.length;i++){
