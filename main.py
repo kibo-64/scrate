@@ -1962,14 +1962,17 @@ async def candidates_restaurants(query: str, client: httpx.AsyncClient) -> list:
 
 
 async def scrape_yelp_rating(name: str, location: str, client: httpx.AsyncClient) -> dict | None:
-    """Scrape Yelp rating for a specific restaurant."""
+    """Scrape Yelp rating via cf_fetch (Cloudflare Browser Rendering)."""
     import re as _re
     search_q = f"{name} {location}".strip()
     url = f"https://www.yelp.com/search?find_desc={quote(search_q)}&find_loc={quote(location)}"
     try:
-        html = await _fetch_html(url, client)
+        # Use cf_fetch directly for JS-rendered Yelp pages
+        html = await cf_fetch(url, client)
         if not html:
+            print(f"[Yelp] cf_fetch returned nothing")
             return None
+        print(f"[Yelp] search HTML len={len(html)}")
         # Try JSON-LD
         ld_blocks = _re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', html, _re.S)
         for block in ld_blocks:
@@ -2001,35 +2004,78 @@ async def scrape_yelp_rating(name: str, location: str, client: httpx.AsyncClient
 
 
 async def scrape_tripadvisor_rating(name: str, location: str, client: httpx.AsyncClient) -> dict | None:
-    """Scrape TripAdvisor rating via Google search."""
+    """Scrape TripAdvisor rating via cf_fetch (Cloudflare Browser Rendering)."""
     import re as _re
-    search_q = f"site:tripadvisor.com {name} {location} restaurant"
-    url = f"https://www.google.com/search?q={quote(search_q)}"
+    search_q = f"{name} {location} restaurant"
+    search_url = f"https://www.tripadvisor.com/Search?q={quote(search_q)}"
     try:
-        html = await _fetch_html(url, client)
+        # Step 1: Search TripAdvisor via cf_fetch (JS-rendered)
+        html = await cf_fetch(search_url, client)
         if not html:
+            print(f"[TripAdvisor] cf_fetch returned nothing for search")
             return None
-        # Look for rating in Google snippet
-        m = _re.search(r'Rating:\s*(\d+\.?\d*)\s*/\s*5', html)
-        if not m:
-            m = _re.search(r'(\d+\.?\d*)\s*(?:out of|/)\s*5.*?tripadvisor', html, _re.I)
+        print(f"[TripAdvisor] search HTML len={len(html)}")
+
+        # Step 2: Find a Restaurant_Review link in search results
+        ta_link = _re.search(r'(https?://(?:www\.)?tripadvisor\.com/Restaurant_Review[^"\'&\s#]+)', html)
+        if not ta_link:
+            # Also try relative links
+            ta_rel = _re.search(r'href="(/Restaurant_Review[^"\'&\s#]+)"', html)
+            if ta_rel:
+                ta_link_url = f"https://www.tripadvisor.com{ta_rel.group(1)}"
+            else:
+                print(f"[TripAdvisor] no restaurant link found in search results")
+                return None
+        else:
+            ta_link_url = ta_link.group(1)
+
+        print(f"[TripAdvisor] found restaurant page: {ta_link_url[:100]}")
+
+        # Step 3: Fetch the restaurant page via cf_fetch
+        ta_html = await cf_fetch(ta_link_url, client)
+        if not ta_html:
+            print(f"[TripAdvisor] cf_fetch returned nothing for restaurant page")
+            return None
+
+        # Step 4: Extract rating from JSON-LD or HTML
+        # Try JSON-LD first
+        ld_blocks = _re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', ta_html, _re.S)
+        for block in ld_blocks:
+            try:
+                data = json.loads(block)
+                if isinstance(data, dict) and data.get("@type") == "Restaurant":
+                    agg = data.get("aggregateRating", {})
+                    rv = agg.get("ratingValue")
+                    if rv:
+                        return {
+                            "source": "TripAdvisor",
+                            "score": float(rv),
+                            "max": 5,
+                            "count": int(agg.get("reviewCount", 0)),
+                            "url": ta_link_url,
+                        }
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+        # Fallback: regex for ratingValue in JSON-LD or meta tags
+        rm = _re.search(r'"ratingValue"\s*:\s*"?(\d+\.?\d*)"?', ta_html)
+        rc = _re.search(r'"reviewCount"\s*:\s*"?(\d+)"?', ta_html)
+        if rm:
+            print(f"[TripAdvisor] found rating via regex: {rm.group(1)}")
+            return {
+                "source": "TripAdvisor",
+                "score": float(rm.group(1)),
+                "max": 5,
+                "count": int(rc.group(1)) if rc else None,
+                "url": ta_link_url,
+            }
+
+        # Fallback: aria-label or bubble rating
+        m = _re.search(r'(\d+\.?\d*)\s*of\s*5\s*bubbles', ta_html)
         if m:
-            return {"source": "TripAdvisor", "score": float(m.group(1)), "max": 5, "url": url}
-        # Try fetching TripAdvisor page directly
-        ta_link = _re.search(r'(https?://(?:www\.)?tripadvisor\.com/Restaurant_Review[^"&\s]+)', html)
-        if ta_link:
-            ta_html = await _fetch_html(ta_link.group(1), client)
-            if ta_html:
-                rm = _re.search(r'"ratingValue"\s*:\s*"?(\d+\.?\d*)"?', ta_html)
-                rc = _re.search(r'"reviewCount"\s*:\s*"?(\d+)"?', ta_html)
-                if rm:
-                    return {
-                        "source": "TripAdvisor",
-                        "score": float(rm.group(1)),
-                        "max": 5,
-                        "count": int(rc.group(1)) if rc else None,
-                        "url": ta_link.group(1),
-                    }
+            return {"source": "TripAdvisor", "score": float(m.group(1)), "max": 5, "url": ta_link_url}
+
+        print(f"[TripAdvisor] could not extract rating from restaurant page")
         return None
     except Exception as e:
         print(f"scrape_tripadvisor_rating error: {e}")
@@ -2066,25 +2112,104 @@ async def scrape_google_reviews(name: str, location: str, client: httpx.AsyncCli
 
 
 async def scrape_opentable_rating(name: str, location: str, client: httpx.AsyncClient) -> dict | None:
-    """Scrape OpenTable rating via Google search."""
+    """Scrape OpenTable rating via cf_fetch (Cloudflare Browser Rendering)."""
     import re as _re
-    search_q = f"site:opentable.com {name} {location}"
-    url = f"https://www.google.com/search?q={quote(search_q)}"
+    search_q = f"{name} {location}"
+    search_url = f"https://www.opentable.com/s?term={quote(search_q)}"
     try:
-        html = await _fetch_html(url, client)
+        # Step 1: Search OpenTable via cf_fetch (JS-rendered)
+        html = await cf_fetch(search_url, client)
         if not html:
+            print(f"[OpenTable] cf_fetch returned nothing for search")
             return None
-        m = _re.search(r'(\d+\.?\d*)\s*/\s*5.*?opentable', html, _re.I)
-        if m:
-            return {"source": "OpenTable", "score": float(m.group(1)), "max": 5, "url": url}
-        # Try fetching OT page
-        ot_link = _re.search(r'(https?://(?:www\.)?opentable\.com/r/[^"&\s]+)', html)
-        if ot_link:
-            ot_html = await _fetch_html(ot_link.group(1), client)
-            if ot_html:
-                rm = _re.search(r'"ratingValue"\s*:\s*"?(\d+\.?\d*)"?', ot_html)
+        print(f"[OpenTable] search HTML len={len(html)}")
+
+        # Step 2: Find a restaurant link in results (/r/ pattern)
+        ot_link = _re.search(r'(https?://(?:www\.)?opentable\.com/r/[^"\'&\s#]+)', html)
+        if not ot_link:
+            ot_rel = _re.search(r'href="(/r/[^"\'&\s#]+)"', html)
+            if ot_rel:
+                ot_link_url = f"https://www.opentable.com{ot_rel.group(1)}"
+            else:
+                # Try JSON embedded in page (OpenTable often uses Next.js __NEXT_DATA__)
+                next_data = _re.search(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, _re.S)
+                if next_data:
+                    try:
+                        nd = json.loads(next_data.group(1))
+                        restaurants = nd.get("props", {}).get("pageProps", {}).get("searchResults", {}).get("restaurants", [])
+                        if not restaurants:
+                            restaurants = nd.get("props", {}).get("pageProps", {}).get("restaurants", [])
+                        for rest in restaurants[:3]:
+                            r_name = rest.get("name", "")
+                            if name.lower()[:8] in r_name.lower():
+                                rating = rest.get("statistics", {}).get("overallRating") or rest.get("overallRating")
+                                count = rest.get("statistics", {}).get("reviewCount") or rest.get("reviewCount")
+                                profile_link = rest.get("profileLink", "") or rest.get("urls", {}).get("profileUrl", "")
+                                if rating:
+                                    r_url = f"https://www.opentable.com{profile_link}" if profile_link.startswith("/") else (profile_link or search_url)
+                                    print(f"[OpenTable] found rating in __NEXT_DATA__: {rating}")
+                                    return {
+                                        "source": "OpenTable",
+                                        "score": float(rating),
+                                        "max": 5,
+                                        "count": int(count) if count else None,
+                                        "url": r_url,
+                                    }
+                    except (json.JSONDecodeError, ValueError, KeyError):
+                        pass
+
+                # Fallback: try ratingValue in raw HTML
+                rm = _re.search(r'"ratingValue"\s*:\s*"?(\d+\.?\d*)"?', html)
                 if rm:
-                    return {"source": "OpenTable", "score": float(rm.group(1)), "max": 5, "url": ot_link.group(1)}
+                    print(f"[OpenTable] found rating in search page HTML: {rm.group(1)}")
+                    return {"source": "OpenTable", "score": float(rm.group(1)), "max": 5, "url": search_url}
+
+                print(f"[OpenTable] no restaurant link found in search results")
+                return None
+        else:
+            ot_link_url = ot_link.group(1)
+
+        print(f"[OpenTable] found restaurant page: {ot_link_url[:100]}")
+
+        # Step 3: Fetch restaurant page via cf_fetch
+        ot_html = await cf_fetch(ot_link_url, client)
+        if not ot_html:
+            print(f"[OpenTable] cf_fetch returned nothing for restaurant page")
+            return None
+
+        # Step 4: Extract rating from JSON-LD
+        ld_blocks = _re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', ot_html, _re.S)
+        for block in ld_blocks:
+            try:
+                data = json.loads(block)
+                if isinstance(data, dict) and data.get("@type") == "Restaurant":
+                    agg = data.get("aggregateRating", {})
+                    rv = agg.get("ratingValue")
+                    if rv:
+                        return {
+                            "source": "OpenTable",
+                            "score": float(rv),
+                            "max": 5,
+                            "count": int(agg.get("reviewCount", 0)),
+                            "url": ot_link_url,
+                        }
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+        # Fallback: regex
+        rm = _re.search(r'"ratingValue"\s*:\s*"?(\d+\.?\d*)"?', ot_html)
+        rc = _re.search(r'"reviewCount"\s*:\s*"?(\d+)"?', ot_html)
+        if rm:
+            print(f"[OpenTable] found rating via regex: {rm.group(1)}")
+            return {
+                "source": "OpenTable",
+                "score": float(rm.group(1)),
+                "max": 5,
+                "count": int(rc.group(1)) if rc else None,
+                "url": ot_link_url,
+            }
+
+        print(f"[OpenTable] could not extract rating from restaurant page")
         return None
     except Exception as e:
         print(f"scrape_opentable_rating error: {e}")
@@ -2305,7 +2430,7 @@ async def get_candidates(
             if isinstance(lst, list):
                 all_candidates.extend(lst)
 
-        # In auto mode: up to 5 per category, 16 total
+        # In auto mode: up to 5 per category, 20 total
         if category == "auto":
             seen_cats: dict = {}
             filtered = []
@@ -2314,7 +2439,7 @@ async def get_candidates(
                 if seen_cats.get(cat, 0) < 5:
                     filtered.append(c)
                     seen_cats[cat] = seen_cats.get(cat, 0) + 1
-            all_candidates = filtered[:16]
+            all_candidates = filtered[:20]
         else:
             all_candidates = all_candidates[:10]
 
