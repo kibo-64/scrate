@@ -206,25 +206,44 @@ async def scrape_metacritic_movie(title: str, year: str, client: httpx.AsyncClie
     return None
 
 
-async def scrape_rt_movie(title: str, client: httpx.AsyncClient) -> list[dict] | None:
+async def scrape_rt_movie(title: str, year: str, client: httpx.AsyncClient) -> list[dict] | None:
     """Scrape Rotten Tomatoes Tomatometer + Audience Score. Returns list of sources."""
     slug = re.sub(r"[^a-z0-9\s_]", "", title.lower()).strip().replace(" ", "_")
+    yr = (year or "").strip()
     urls = [
+        f"https://www.rottentomatoes.com/m/{slug}_{yr}" if yr else None,
         f"https://www.rottentomatoes.com/m/{slug}",
-        f"https://www.rottentomatoes.com/m/{slug.replace('_', '-')}",
+        f"https://www.rottentomatoes.com/m/{slug.replace('_', '-')}" if "_" in slug else None,
     ]
+    urls = [u for u in urls if u]
 
     def _parse_rt(html: str) -> list[dict] | None:
         soup = BeautifulSoup(html, "html.parser")
         results = []
-        # Look for score-board or media-scorecard element attributes
-        sb = soup.find("score-board") or soup.find("media-scorecard")
         tomatometer = None
         audience = None
-        if sb:
-            tomatometer = sb.get("tomatometerscore") or sb.get("criticsScore")
-            audience = sb.get("audiencescore") or sb.get("audienceScore")
-        # Fallback: search for JSON-LD or scoreboard data in scripts
+
+        # Strategy 1: media-scorecard-json script tag (most reliable)
+        sc_script = soup.find("script", id="media-scorecard-json")
+        if sc_script and sc_script.string:
+            try:
+                sc = json.loads(sc_script.string)
+                cs = sc.get("criticsScore", {})
+                aus = sc.get("audienceScore", {})
+                tomatometer = cs.get("score")
+                audience = aus.get("score")
+                print(f"[RT] media-scorecard-json: critics={tomatometer} audience={audience}")
+            except Exception as e:
+                print(f"[RT] media-scorecard-json error: {e}")
+
+        # Strategy 2: score-board / media-scorecard element attrs
+        if not tomatometer:
+            sb = soup.find("score-board") or soup.find("media-scorecard")
+            if sb:
+                tomatometer = sb.get("tomatometerscore") or sb.get("criticsScore")
+                audience = sb.get("audiencescore") or sb.get("audienceScore")
+
+        # Strategy 3: JSON-LD aggregateRating
         if not tomatometer:
             for script in soup.find_all("script", type="application/ld+json"):
                 try:
@@ -235,15 +254,19 @@ async def scrape_rt_movie(title: str, client: httpx.AsyncClient) -> list[dict] |
                             tomatometer = str(int(float(val)))
                 except Exception:
                     pass
-        # Fallback: regex for tomatometer in page text
+
+        # Strategy 4: regex in raw HTML
         if not tomatometer:
-            m = re.search(r'"tomatometerScore":\s*\{[^}]*"score":\s*(\d+)', html)
+            m = re.search(r'"criticsScore":\s*\{[^}]*"score":\s*"?(\d+)', html)
+            if not m:
+                m = re.search(r'"tomatometerScore":\s*\{[^}]*"score":\s*(\d+)', html)
             if m:
                 tomatometer = m.group(1)
         if not audience:
-            m = re.search(r'"audienceScore":\s*\{[^}]*"score":\s*(\d+)', html)
+            m = re.search(r'"audienceScore":\s*\{[^}]*"score":\s*"?(\d+)', html)
             if m:
                 audience = m.group(1)
+
         if tomatometer:
             results.append(build_source(
                 "Rotten Tomatoes", "Expert", "&#127813;", "#fa320a",
@@ -1491,7 +1514,7 @@ async def score_tmdb_by_id(item_id: str, media_type: str, client: httpx.AsyncCli
             ))
 
         extra = await asyncio.gather(
-            scrape_rt_movie(title, client),
+            scrape_rt_movie(title, year, client),
             scrape_metacritic_movie(title, year, client),
             scrape_imdb(title, year, client),
             score_rogerebert(title, year, client),
