@@ -7,7 +7,7 @@
   <meta name="description" content="Search any product, movie, game, album, or book. Scrawl aggregates every review and gives you one Consensus." />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg:       #0c0c11;
@@ -47,7 +47,7 @@
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
+      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
       min-height: 100vh;
       transition: background .25s, color .25s;
     }
@@ -641,7 +641,7 @@
     [data-theme="light"] .hero-h1 .w4{background-image:linear-gradient(135deg,#1a1a2e 0%,#db2777 50%,#1a1a2e 100%);}
 
     /* ── LOGO scramble cursor ── */
-    .logo{cursor:default;font-family:'Space Grotesk',sans-serif;font-weight:700;letter-spacing:-0.03em;}
+    .logo{cursor:default;font-family:'Inter',sans-serif;font-weight:700;letter-spacing:-0.03em;}
 
     /* ── SEARCH box glow on focus ── */
     .search-box:focus-within,.nav-search-box:focus-within{
@@ -1183,7 +1183,7 @@
               <div class="omni-max">/100</div>
             </div>
           </div>
-          <div class="omni-tag">Consensus</div>
+          <div class="omni-tag">General Consensus</div>
         </div>
 
         <!-- PRODUCT INFO -->
@@ -1195,7 +1195,6 @@
           <div class="product-title">${escHtml(d.title||"")}</div>
           <div class="product-subtitle">${escHtml(d.subtitle||"")}</div>
           <div class="verdict-pill ${verdictClass(d.verdict)}">✦ ${d.verdict||"Analyzed"}</div>
-          <div class="ai-pill">✨ AI Summary</div>
           <div class="ai-summary">${escHtml(d.ai_summary||"")}</div>
         </div>
       </div>
@@ -1203,8 +1202,8 @@
       <!-- PRO CON -->
       ${proItems||conItems ? `
       <div class="pro-con fade-in d2">
-        ${proItems?`<div class="pro-box"><h4>👍 What reviewers love</h4><ul>${proItems}</ul></div>`:""}
-        ${conItems?`<div class="con-box"><h4>👎 Common criticisms</h4><ul>${conItems}</ul></div>`:""}
+        ${proItems?`<div class="pro-box"><h4>👍 What people like</h4><ul>${proItems}</ul></div>`:""}
+        ${conItems?`<div class="con-box"><h4>👎 What people don't like</h4><ul>${conItems}</ul></div>`:""}
       </div>`:""}
 
       <!-- SOURCES -->
