@@ -557,19 +557,30 @@ async def score_rogerebert(title: str, year: str, client: httpx.AsyncClient) -> 
         if slug_no_article != slug:
             urls.append(f"https://www.rogerebert.com/reviews/{slug_no_article}")
         for url in urls:
+            print(f"[EBERT] Trying: {url}")
             html = await cf_fetch(url, client)
             if html:
+                print(f"[EBERT] cf_fetch OK len={len(html)}")
                 result = _parse_ebert(html)
                 if result:
+                    print(f"[EBERT] FOUND via cf_fetch")
                     return result
+                else:
+                    print(f"[EBERT] parse failed on cf_fetch html")
+            else:
+                print(f"[EBERT] cf_fetch None")
             try:
                 r = await client.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=10)
+                print(f"[EBERT] GET status={r.status_code} len={len(r.text)}")
                 if r.status_code == 200:
                     result = _parse_ebert(r.text)
                     if result:
+                        print(f"[EBERT] FOUND via GET")
                         return result
-            except Exception:
-                pass
+                    else:
+                        print(f"[EBERT] parse failed on GET html")
+            except Exception as e:
+                print(f"[EBERT] GET error: {e}")
     except Exception:
         pass
     return None
