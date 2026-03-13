@@ -160,6 +160,11 @@ CAR_KW     = {"car","suv","truck","sedan","coupe","hatchback","convertible","min
                "horsepower","mpg","torque","0-60","turbo","hybrid","electric vehicle",
                "toyota","honda","ford","chevrolet","bmw","mercedes","audi","tesla",
                "hyundai","kia","nissan","volkswagen","subaru","mazda","porsche","lexus"}
+RESTAURANT_KW = {"restaurant","diner","cafe","bistro","pizzeria","steakhouse","sushi",
+                  "brunch","eatery","food","dining","takeout","takeaway","burger","taco",
+                  "ramen","bbq","barbecue","seafood","buffet","gastropub","trattoria",
+                  "brasserie","pub food","noodle","dim sum","thai","italian restaurant",
+                  "mexican restaurant","chinese restaurant","indian restaurant","korean bbq"}
 
 def detect_category(query: str) -> str:
     q = query.lower()
@@ -173,6 +178,8 @@ def detect_category(query: str) -> str:
         if kw in q: return "movie"
     for kw in CAR_KW:
         if kw in q: return "car"
+    for kw in RESTAURANT_KW:
+        if kw in q: return "restaurant"
     return "auto"
 
 # âââ SCRAPERS ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
@@ -1852,6 +1859,249 @@ async def search_books(query: str, client: httpx.AsyncClient) -> dict | None:
         "sources":  sources,
     }
 
+
+# ─── RESTAURANT SCRAPERS ────────────────────────────────────────────────────────
+
+async def candidates_restaurants(query: str, client: httpx.AsyncClient) -> list:
+    """Search Yelp for restaurant candidates."""
+    url = f"https://www.yelp.com/search?find_desc={quote(query)}&find_loc="
+    try:
+        resp = await cf_fetch(url, client)
+        if not resp:
+            return []
+        candidates = []
+        # Try JSON-LD first
+        import re as _re
+        ld_blocks = _re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', resp, _re.S)
+        for block in ld_blocks:
+            try:
+                data = json.loads(block)
+                if isinstance(data, dict) and data.get("@type") == "ItemList":
+                    for item in data.get("itemListElement", [])[:8]:
+                        biz = item.get("itemReviewed") or item
+                        name = biz.get("name", "")
+                        addr = biz.get("address", {})
+                        city = addr.get("addressLocality", "") if isinstance(addr, dict) else ""
+                        rating = biz.get("aggregateRating", {}).get("ratingValue")
+                        image = biz.get("image") or ""
+                        if isinstance(image, list):
+                            image = image[0] if image else ""
+                        candidates.append({
+                            "id": f"{name}::{city}",
+                            "title": name,
+                            "category": "restaurant",
+                            "image_url": image,
+                            "year": city,
+                            "overview": f"Rating: {rating}/5" if rating else "",
+                            "sources": [],
+                        })
+            except json.JSONDecodeError:
+                continue
+        if candidates:
+            return candidates[:8]
+        # Fallback: regex scrape
+        biz_names = _re.findall(r'class="css-19v1rkv"[^>]*>(.*?)</a>', resp)
+        for name in biz_names[:8]:
+            clean = _re.sub(r'<[^>]+>', '', name).strip()
+            # Remove leading number+dot
+            clean = _re.sub(r'^\d+\.\s*', '', clean)
+            if clean:
+                candidates.append({
+                    "id": f"{clean}::",
+                    "title": clean,
+                    "category": "restaurant",
+                    "image_url": "",
+                    "year": "",
+                    "overview": "",
+                    "sources": [],
+                })
+        return candidates[:8]
+    except Exception as e:
+        logger.warning(f"candidates_restaurants error: {e}")
+        return []
+
+
+async def scrape_yelp_rating(name: str, location: str, client: httpx.AsyncClient) -> dict | None:
+    """Scrape Yelp rating for a specific restaurant."""
+    import re as _re
+    search_q = f"{name} {location}".strip()
+    url = f"https://www.yelp.com/search?find_desc={quote(search_q)}&find_loc={quote(location)}"
+    try:
+        html = await cf_fetch(url, client)
+        if not html:
+            return None
+        # Try JSON-LD
+        ld_blocks = _re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', html, _re.S)
+        for block in ld_blocks:
+            try:
+                data = json.loads(block)
+                if isinstance(data, dict) and data.get("@type") == "ItemList":
+                    for item in data.get("itemListElement", [])[:3]:
+                        biz = item.get("itemReviewed") or item
+                        biz_name = biz.get("name", "")
+                        if name.lower()[:10] in biz_name.lower():
+                            agg = biz.get("aggregateRating", {})
+                            return {
+                                "source": "Yelp",
+                                "score": float(agg.get("ratingValue", 0)),
+                                "max": 5,
+                                "count": int(agg.get("reviewCount", 0)),
+                                "url": url,
+                            }
+            except (json.JSONDecodeError, ValueError):
+                continue
+        # Fallback: regex
+        m = _re.search(r'aria-label="(\d+\.?\d*)\s+star rating"', html)
+        if m:
+            return {"source": "Yelp", "score": float(m.group(1)), "max": 5, "url": url}
+        return None
+    except Exception as e:
+        logger.warning(f"scrape_yelp_rating error: {e}")
+        return None
+
+
+async def scrape_tripadvisor_rating(name: str, location: str, client: httpx.AsyncClient) -> dict | None:
+    """Scrape TripAdvisor rating via Google search."""
+    import re as _re
+    search_q = f"site:tripadvisor.com {name} {location} restaurant"
+    url = f"https://www.google.com/search?q={quote(search_q)}"
+    try:
+        html = await cf_fetch(url, client)
+        if not html:
+            return None
+        # Look for rating in Google snippet
+        m = _re.search(r'Rating:\s*(\d+\.?\d*)\s*/\s*5', html)
+        if not m:
+            m = _re.search(r'(\d+\.?\d*)\s*(?:out of|/)\s*5.*?tripadvisor', html, _re.I)
+        if m:
+            return {"source": "TripAdvisor", "score": float(m.group(1)), "max": 5, "url": url}
+        # Try fetching TripAdvisor page directly
+        ta_link = _re.search(r'(https?://(?:www\.)?tripadvisor\.com/Restaurant_Review[^"&\s]+)', html)
+        if ta_link:
+            ta_html = await cf_fetch(ta_link.group(1), client)
+            if ta_html:
+                rm = _re.search(r'"ratingValue"\s*:\s*"?(\d+\.?\d*)"?', ta_html)
+                rc = _re.search(r'"reviewCount"\s*:\s*"?(\d+)"?', ta_html)
+                if rm:
+                    return {
+                        "source": "TripAdvisor",
+                        "score": float(rm.group(1)),
+                        "max": 5,
+                        "count": int(rc.group(1)) if rc else None,
+                        "url": ta_link.group(1),
+                    }
+        return None
+    except Exception as e:
+        logger.warning(f"scrape_tripadvisor_rating error: {e}")
+        return None
+
+
+async def scrape_google_reviews(name: str, location: str, client: httpx.AsyncClient) -> dict | None:
+    """Extract Google Reviews rating from search."""
+    import re as _re
+    search_q = f"{name} {location} restaurant reviews"
+    url = f"https://www.google.com/search?q={quote(search_q)}"
+    try:
+        html = await cf_fetch(url, client)
+        if not html:
+            return None
+        # Google knowledge panel rating
+        m = _re.search(r'(\d+\.?\d*)\s*<[^>]*>\s*\(([\d,]+)\s*(?:reviews?|Google reviews)', html)
+        if not m:
+            m = _re.search(r'(\d+\.?\d*)\s*/\s*5.*?([\d,]+)\s*(?:reviews?|ratings?)', html, _re.I)
+        if not m:
+            m = _re.search(r'class="[^"]*"[^>]*>(\d+\.\d)\s*</span>.*?([\d,]+)\s*reviews?', html, _re.S)
+        if m:
+            return {
+                "source": "Google",
+                "score": float(m.group(1)),
+                "max": 5,
+                "count": int(m.group(2).replace(",", "")),
+                "url": url,
+            }
+        return None
+    except Exception as e:
+        logger.warning(f"scrape_google_reviews error: {e}")
+        return None
+
+
+async def scrape_opentable_rating(name: str, location: str, client: httpx.AsyncClient) -> dict | None:
+    """Scrape OpenTable rating via Google search."""
+    import re as _re
+    search_q = f"site:opentable.com {name} {location}"
+    url = f"https://www.google.com/search?q={quote(search_q)}"
+    try:
+        html = await cf_fetch(url, client)
+        if not html:
+            return None
+        m = _re.search(r'(\d+\.?\d*)\s*/\s*5.*?opentable', html, _re.I)
+        if m:
+            return {"source": "OpenTable", "score": float(m.group(1)), "max": 5, "url": url}
+        # Try fetching OT page
+        ot_link = _re.search(r'(https?://(?:www\.)?opentable\.com/r/[^"&\s]+)', html)
+        if ot_link:
+            ot_html = await cf_fetch(ot_link.group(1), client)
+            if ot_html:
+                rm = _re.search(r'"ratingValue"\s*:\s*"?(\d+\.?\d*)"?', ot_html)
+                if rm:
+                    return {"source": "OpenTable", "score": float(rm.group(1)), "max": 5, "url": ot_link.group(1)}
+        return None
+    except Exception as e:
+        logger.warning(f"scrape_opentable_rating error: {e}")
+        return None
+
+
+async def score_restaurant_by_id(restaurant_id: str, client: httpx.AsyncClient) -> dict | None:
+    """
+    Orchestrator: score a restaurant from Yelp, TripAdvisor, Google, OpenTable.
+    restaurant_id format: "Restaurant Name::City"
+    """
+    parts = restaurant_id.split("::", 1)
+    name = parts[0].strip()
+    location = parts[1].strip() if len(parts) > 1 else ""
+
+    tasks = [
+        scrape_yelp_rating(name, location, client),
+        scrape_tripadvisor_rating(name, location, client),
+        scrape_google_reviews(name, location, client),
+        scrape_opentable_rating(name, location, client),
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    sources = []
+    for r in results:
+        if isinstance(r, dict) and r:
+            sources.append(r)
+
+    if not sources:
+        return None
+
+    # Normalize scores to 0-100 and compute OmniScore
+    normalized = []
+    for s in sources:
+        score = s.get("score", 0)
+        mx = s.get("max", 5)
+        norm = round((score / mx) * 100) if mx else 0
+        s["normalized"] = norm
+        normalized.append(norm)
+
+    omniscore = round(sum(normalized) / len(normalized)) if normalized else 0
+
+    # Find best image from Yelp search
+    image_url = ""
+    yelp_url = f"https://www.yelp.com/search?find_desc={quote(name + ' ' + location)}"
+
+    return {
+        "title": name,
+        "omniscore": omniscore,
+        "scores": sources,
+        "category": "restaurant",
+        "image_url": image_url,
+        "year": location,
+        "overview": f"Restaurant in {location}" if location else "Restaurant",
+        "sources": sources,
+    }
+
 # âââ AI OMNISCORE SUMMARY âââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 async def generate_ai_analysis(
@@ -1936,7 +2186,7 @@ async def finalize(result: dict) -> dict:
 @app.get("/candidates")
 async def get_candidates(
     q:        str = Query(..., min_length=2, description="Search query"),
-    category: str = Query("auto", description="Filter: auto | game | movie | tv | music | book | car"),
+    category: str = Query("auto", description="Filter: auto | game | movie | tv | music | book | car | restaurant"),
 ):
     """
     Fast candidate lookup â returns title, year, poster, category for top matches.
@@ -1954,6 +2204,8 @@ async def get_candidates(
             tasks.append(candidates_music(q, client))
         if category == "car" or (category == "auto" and detect_category(q) == "car"):
             tasks.append(candidates_cars(q, client))
+        if category == "restaurant" or (category == "auto" and detect_category(q) == "restaurant"):
+            tasks.append(candidates_restaurants(q, client))
 
         lists = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -1980,7 +2232,7 @@ async def get_candidates(
 
 @app.get("/score")
 async def score_by_id(
-    category: str = Query(..., description="game | movie | tv | music | book"),
+    category: str = Query(..., description="game | movie | tv | music | book | car | restaurant"),
     id:       str = Query(..., description="Source-specific item ID"),
 ):
     """
@@ -2006,6 +2258,8 @@ async def score_by_id(
             result = await score_music_by_id(id, client)
         elif category == "car":
             result = await score_car_by_id(id, client)
+        elif category == "restaurant":
+            result = await score_restaurant_by_id(id, client)
 
         if not result:
             raise HTTPException(
