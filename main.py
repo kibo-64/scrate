@@ -2011,8 +2011,11 @@ async def scrape_tripadvisor_rating(name: str, location: str, client: httpx.Asyn
     search_q = f"site:tripadvisor.com {name} {location} restaurant"
     google_url = f"https://www.google.com/search?q={quote(search_q)}"
     try:
-        # Step 1: Google search to find the TripAdvisor restaurant page URL
-        html = await _fetch_html(google_url, client)
+        # Step 1: Google search via cf_fetch (real browser bypasses CAPTCHA/consent)
+        html = await cf_fetch(google_url, client)
+        if not html:
+            # Fallback to plain HTTP
+            html = await _fetch_html(google_url, client)
         if not html:
             print(f"[TripAdvisor] Google search returned nothing")
             return None
@@ -2134,8 +2137,11 @@ async def scrape_opentable_rating(name: str, location: str, client: httpx.AsyncC
     search_q = f"site:opentable.com {name} {location} restaurant"
     google_url = f"https://www.google.com/search?q={quote(search_q)}"
     try:
-        # Step 1: Google search to find the OpenTable restaurant page URL
-        html = await _fetch_html(google_url, client)
+        # Step 1: Google search via cf_fetch (real browser bypasses CAPTCHA/consent)
+        html = await cf_fetch(google_url, client)
+        if not html:
+            # Fallback to plain HTTP
+            html = await _fetch_html(google_url, client)
         if not html:
             print(f"[OpenTable] Google search returned nothing")
             return None
