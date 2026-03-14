@@ -2019,11 +2019,23 @@ async def scrape_tripadvisor_rating(name: str, location: str, client: httpx.Asyn
         print(f"[TripAdvisor] Google search HTML len={len(html)}")
 
         # Step 2: Find a Restaurant_Review link in Google results
+        # Google wraps URLs in /url?q= redirects and may URL-encode them
+        from urllib.parse import unquote as _unquote
         ta_link = _re.search(r'(https?://(?:www\.)?tripadvisor\.com/Restaurant_Review[^"\'&\s#]+)', html)
         if not ta_link:
-            print(f"[TripAdvisor] no Restaurant_Review link found in Google results")
-            return None
-        ta_link_url = ta_link.group(1)
+            # Try URL-encoded version in Google's /url?q= wrapper
+            ta_link = _re.search(r'/url\?q=(https?(?:%3A|:)(?:%2F|/)(?:%2F|/)(?:www\.)?tripadvisor\.com(?:%2F|/)Restaurant_Review[^&"\']+)', html)
+        if not ta_link:
+            # Try just finding tripadvisor.com anywhere with Restaurant_Review
+            ta_link = _re.search(r'tripadvisor\.com[/\\%]+Restaurant_Review[^"\'&\s#]*', html)
+            if ta_link:
+                raw = _unquote(ta_link.group(0))
+                ta_link_url = f"https://www.{raw}" if not raw.startswith("http") else raw
+            else:
+                print(f"[TripAdvisor] no Restaurant_Review link found in Google results")
+                return None
+        else:
+            ta_link_url = _unquote(ta_link.group(1))
         print(f"[TripAdvisor] found restaurant page: {ta_link_url[:100]}")
 
         # Step 3: Fetch the restaurant page (try _fetch_html first, then cf_fetch)
@@ -2130,14 +2142,22 @@ async def scrape_opentable_rating(name: str, location: str, client: httpx.AsyncC
         print(f"[OpenTable] Google search HTML len={len(html)}")
 
         # Step 2: Find an OpenTable restaurant link (/r/ pattern) in Google results
+        # Google wraps URLs in /url?q= redirects and may URL-encode them
+        from urllib.parse import unquote as _unquote
         ot_link = _re.search(r'(https?://(?:www\.)?opentable\.com/r/[^"\'&\s#]+)', html)
         if not ot_link:
-            # Also try general opentable links
+            # Try URL-encoded version in Google's /url?q= wrapper
+            ot_link = _re.search(r'/url\?q=(https?(?:%3A|:)(?:%2F|/)(?:%2F|/)(?:www\.)?opentable\.com(?:%2F|/)r(?:%2F|/)[^&"\']+)', html)
+        if not ot_link:
+            # Try any opentable.com link from Google results
+            ot_link = _re.search(r'/url\?q=(https?(?:%3A|:)(?:%2F|/)(?:%2F|/)(?:www\.)?opentable\.com(?:%2F|/)[^&"\']+)', html)
+        if not ot_link:
+            # Also try general opentable links in plain text
             ot_link = _re.search(r'(https?://(?:www\.)?opentable\.com/[^"\'&\s#]*?restaurant[^"\'&\s#]*)', html, _re.I)
         if not ot_link:
             print(f"[OpenTable] no restaurant link found in Google results")
             return None
-        ot_link_url = ot_link.group(1)
+        ot_link_url = _unquote(ot_link.group(1))
         print(f"[OpenTable] found restaurant page: {ot_link_url[:100]}")
 
         # Step 3: Fetch restaurant page
