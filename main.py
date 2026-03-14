@@ -517,8 +517,10 @@ async def cf_fetch(url: str, client: httpx.AsyncClient) -> str | None:
                     return res
                 return data.get("content") or r.text
             return r.text
-    except Exception:
-        pass
+        else:
+            print(f"[cf_fetch] status={r.status_code} for {url[:80]}: {r.text[:200]}")
+    except Exception as e:
+        print(f"[cf_fetch] exception for {url[:80]}: {e}")
     return None
 
 
@@ -2004,41 +2006,34 @@ async def scrape_yelp_rating(name: str, location: str, client: httpx.AsyncClient
 
 
 async def scrape_tripadvisor_rating(name: str, location: str, client: httpx.AsyncClient) -> dict | None:
-    """Scrape TripAdvisor rating via cf_fetch (Cloudflare Browser Rendering)."""
+    """Scrape TripAdvisor rating: Google search to find restaurant page, then fetch it."""
     import re as _re
-    search_q = f"{name} {location} restaurant"
-    search_url = f"https://www.tripadvisor.com/Search?q={quote(search_q)}"
+    search_q = f"site:tripadvisor.com {name} {location} restaurant"
+    google_url = f"https://www.google.com/search?q={quote(search_q)}"
     try:
-        # Step 1: Search TripAdvisor via cf_fetch (JS-rendered)
-        html = await cf_fetch(search_url, client)
+        # Step 1: Google search to find the TripAdvisor restaurant page URL
+        html = await _fetch_html(google_url, client)
         if not html:
-            print(f"[TripAdvisor] cf_fetch returned nothing for search")
+            print(f"[TripAdvisor] Google search returned nothing")
             return None
-        print(f"[TripAdvisor] search HTML len={len(html)}")
+        print(f"[TripAdvisor] Google search HTML len={len(html)}")
 
-        # Step 2: Find a Restaurant_Review link in search results
+        # Step 2: Find a Restaurant_Review link in Google results
         ta_link = _re.search(r'(https?://(?:www\.)?tripadvisor\.com/Restaurant_Review[^"\'&\s#]+)', html)
         if not ta_link:
-            # Also try relative links
-            ta_rel = _re.search(r'href="(/Restaurant_Review[^"\'&\s#]+)"', html)
-            if ta_rel:
-                ta_link_url = f"https://www.tripadvisor.com{ta_rel.group(1)}"
-            else:
-                print(f"[TripAdvisor] no restaurant link found in search results")
-                return None
-        else:
-            ta_link_url = ta_link.group(1)
-
+            print(f"[TripAdvisor] no Restaurant_Review link found in Google results")
+            return None
+        ta_link_url = ta_link.group(1)
         print(f"[TripAdvisor] found restaurant page: {ta_link_url[:100]}")
 
-        # Step 3: Fetch the restaurant page via cf_fetch
-        ta_html = await cf_fetch(ta_link_url, client)
+        # Step 3: Fetch the restaurant page (try _fetch_html first, then cf_fetch)
+        ta_html = await _fetch_html(ta_link_url, client)
         if not ta_html:
-            print(f"[TripAdvisor] cf_fetch returned nothing for restaurant page")
+            print(f"[TripAdvisor] _fetch_html returned nothing for restaurant page")
             return None
+        print(f"[TripAdvisor] restaurant page HTML len={len(ta_html)}")
 
         # Step 4: Extract rating from JSON-LD or HTML
-        # Try JSON-LD first
         ld_blocks = _re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', ta_html, _re.S)
         for block in ld_blocks:
             try:
@@ -2047,6 +2042,7 @@ async def scrape_tripadvisor_rating(name: str, location: str, client: httpx.Asyn
                     agg = data.get("aggregateRating", {})
                     rv = agg.get("ratingValue")
                     if rv:
+                        print(f"[TripAdvisor] found rating via JSON-LD: {rv}")
                         return {
                             "source": "TripAdvisor",
                             "score": float(rv),
@@ -2070,10 +2066,19 @@ async def scrape_tripadvisor_rating(name: str, location: str, client: httpx.Asyn
                 "url": ta_link_url,
             }
 
-        # Fallback: aria-label or bubble rating
+        # Fallback: bubble rating text
         m = _re.search(r'(\d+\.?\d*)\s*of\s*5\s*bubbles', ta_html)
         if m:
+            print(f"[TripAdvisor] found rating via bubble text: {m.group(1)}")
             return {"source": "TripAdvisor", "score": float(m.group(1)), "max": 5, "url": ta_link_url}
+
+        # Fallback: try extracting from Google search snippet itself (often shows rating)
+        gm = _re.search(r'tripadvisor\.com.*?(\d+\.?\d*)\s*/\s*5', html)
+        if not gm:
+            gm = _re.search(r'Rating:\s*(\d+\.?\d*)\s*/\s*5', html)
+        if gm:
+            print(f"[TripAdvisor] found rating from Google snippet: {gm.group(1)}")
+            return {"source": "TripAdvisor", "score": float(gm.group(1)), "max": 5, "url": ta_link_url}
 
         print(f"[TripAdvisor] could not extract rating from restaurant page")
         return None
@@ -2112,70 +2117,35 @@ async def scrape_google_reviews(name: str, location: str, client: httpx.AsyncCli
 
 
 async def scrape_opentable_rating(name: str, location: str, client: httpx.AsyncClient) -> dict | None:
-    """Scrape OpenTable rating via cf_fetch (Cloudflare Browser Rendering)."""
+    """Scrape OpenTable rating: Google search to find restaurant page, then fetch it."""
     import re as _re
-    search_q = f"{name} {location}"
-    search_url = f"https://www.opentable.com/s?term={quote(search_q)}"
+    search_q = f"site:opentable.com {name} {location} restaurant"
+    google_url = f"https://www.google.com/search?q={quote(search_q)}"
     try:
-        # Step 1: Search OpenTable via cf_fetch (JS-rendered)
-        html = await cf_fetch(search_url, client)
+        # Step 1: Google search to find the OpenTable restaurant page URL
+        html = await _fetch_html(google_url, client)
         if not html:
-            print(f"[OpenTable] cf_fetch returned nothing for search")
+            print(f"[OpenTable] Google search returned nothing")
             return None
-        print(f"[OpenTable] search HTML len={len(html)}")
+        print(f"[OpenTable] Google search HTML len={len(html)}")
 
-        # Step 2: Find a restaurant link in results (/r/ pattern)
+        # Step 2: Find an OpenTable restaurant link (/r/ pattern) in Google results
         ot_link = _re.search(r'(https?://(?:www\.)?opentable\.com/r/[^"\'&\s#]+)', html)
         if not ot_link:
-            ot_rel = _re.search(r'href="(/r/[^"\'&\s#]+)"', html)
-            if ot_rel:
-                ot_link_url = f"https://www.opentable.com{ot_rel.group(1)}"
-            else:
-                # Try JSON embedded in page (OpenTable often uses Next.js __NEXT_DATA__)
-                next_data = _re.search(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, _re.S)
-                if next_data:
-                    try:
-                        nd = json.loads(next_data.group(1))
-                        restaurants = nd.get("props", {}).get("pageProps", {}).get("searchResults", {}).get("restaurants", [])
-                        if not restaurants:
-                            restaurants = nd.get("props", {}).get("pageProps", {}).get("restaurants", [])
-                        for rest in restaurants[:3]:
-                            r_name = rest.get("name", "")
-                            if name.lower()[:8] in r_name.lower():
-                                rating = rest.get("statistics", {}).get("overallRating") or rest.get("overallRating")
-                                count = rest.get("statistics", {}).get("reviewCount") or rest.get("reviewCount")
-                                profile_link = rest.get("profileLink", "") or rest.get("urls", {}).get("profileUrl", "")
-                                if rating:
-                                    r_url = f"https://www.opentable.com{profile_link}" if profile_link.startswith("/") else (profile_link or search_url)
-                                    print(f"[OpenTable] found rating in __NEXT_DATA__: {rating}")
-                                    return {
-                                        "source": "OpenTable",
-                                        "score": float(rating),
-                                        "max": 5,
-                                        "count": int(count) if count else None,
-                                        "url": r_url,
-                                    }
-                    except (json.JSONDecodeError, ValueError, KeyError):
-                        pass
-
-                # Fallback: try ratingValue in raw HTML
-                rm = _re.search(r'"ratingValue"\s*:\s*"?(\d+\.?\d*)"?', html)
-                if rm:
-                    print(f"[OpenTable] found rating in search page HTML: {rm.group(1)}")
-                    return {"source": "OpenTable", "score": float(rm.group(1)), "max": 5, "url": search_url}
-
-                print(f"[OpenTable] no restaurant link found in search results")
-                return None
-        else:
-            ot_link_url = ot_link.group(1)
-
+            # Also try general opentable links
+            ot_link = _re.search(r'(https?://(?:www\.)?opentable\.com/[^"\'&\s#]*?restaurant[^"\'&\s#]*)', html, _re.I)
+        if not ot_link:
+            print(f"[OpenTable] no restaurant link found in Google results")
+            return None
+        ot_link_url = ot_link.group(1)
         print(f"[OpenTable] found restaurant page: {ot_link_url[:100]}")
 
-        # Step 3: Fetch restaurant page via cf_fetch
-        ot_html = await cf_fetch(ot_link_url, client)
+        # Step 3: Fetch restaurant page
+        ot_html = await _fetch_html(ot_link_url, client)
         if not ot_html:
-            print(f"[OpenTable] cf_fetch returned nothing for restaurant page")
+            print(f"[OpenTable] _fetch_html returned nothing for restaurant page")
             return None
+        print(f"[OpenTable] restaurant page HTML len={len(ot_html)}")
 
         # Step 4: Extract rating from JSON-LD
         ld_blocks = _re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', ot_html, _re.S)
@@ -2186,6 +2156,7 @@ async def scrape_opentable_rating(name: str, location: str, client: httpx.AsyncC
                     agg = data.get("aggregateRating", {})
                     rv = agg.get("ratingValue")
                     if rv:
+                        print(f"[OpenTable] found rating via JSON-LD: {rv}")
                         return {
                             "source": "OpenTable",
                             "score": float(rv),
@@ -2195,6 +2166,29 @@ async def scrape_opentable_rating(name: str, location: str, client: httpx.AsyncC
                         }
             except (json.JSONDecodeError, ValueError):
                 continue
+
+        # Try __NEXT_DATA__ JSON
+        next_data = _re.search(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', ot_html, _re.S)
+        if next_data:
+            try:
+                nd = json.loads(next_data.group(1))
+                # Walk through possible paths for rating
+                page_props = nd.get("props", {}).get("pageProps", {})
+                restaurant = page_props.get("restaurant", {}) or page_props.get("restaurantProfile", {})
+                if restaurant:
+                    rating = restaurant.get("overallRating") or restaurant.get("statistics", {}).get("overallRating")
+                    count = restaurant.get("reviewCount") or restaurant.get("statistics", {}).get("reviewCount")
+                    if rating:
+                        print(f"[OpenTable] found rating in __NEXT_DATA__: {rating}")
+                        return {
+                            "source": "OpenTable",
+                            "score": float(rating),
+                            "max": 5,
+                            "count": int(count) if count else None,
+                            "url": ot_link_url,
+                        }
+            except (json.JSONDecodeError, ValueError, KeyError):
+                pass
 
         # Fallback: regex
         rm = _re.search(r'"ratingValue"\s*:\s*"?(\d+\.?\d*)"?', ot_html)
@@ -2208,6 +2202,14 @@ async def scrape_opentable_rating(name: str, location: str, client: httpx.AsyncC
                 "count": int(rc.group(1)) if rc else None,
                 "url": ot_link_url,
             }
+
+        # Fallback: try extracting from Google search snippet
+        gm = _re.search(r'opentable\.com.*?(\d+\.?\d*)\s*/\s*5', html)
+        if not gm:
+            gm = _re.search(r'Rating:\s*(\d+\.?\d*)\s*/\s*5', html)
+        if gm:
+            print(f"[OpenTable] found rating from Google snippet: {gm.group(1)}")
+            return {"source": "OpenTable", "score": float(gm.group(1)), "max": 5, "url": ot_link_url}
 
         print(f"[OpenTable] could not extract rating from restaurant page")
         return None
@@ -2254,11 +2256,13 @@ async def score_restaurant_by_id(restaurant_id: str, client: httpx.AsyncClient) 
             rating = details.get("rating")
             count = details.get("userRatingCount", 0)
             if rating:
+                normalized = round(rating * 20)
                 sources.append({
                     "name": "Google",
-                    "type": "critic",
-                    "score": round(rating * 20),
+                    "type": "Users",
+                    "score": normalized,
                     "outOf": 100,
+                    "sentiment": normalized,
                     "reviews": count,
                     "url": details.get("googleMapsUri", ""),
                 })
@@ -2276,11 +2280,13 @@ async def score_restaurant_by_id(restaurant_id: str, client: httpx.AsyncClient) 
             # Convert to standard source format
             score = r.get("score", 0)
             mx = r.get("max", 5)
+            normalized = round((score / mx) * 100) if mx else 0
             sources.append({
                 "name": r.get("source", "Unknown"),
-                "type": "critic",
-                "score": round((score / mx) * 100) if mx else 0,
+                "type": "Users",
+                "score": normalized,
                 "outOf": 100,
+                "sentiment": normalized,
                 "reviews": r.get("count"),
                 "url": r.get("url", ""),
             })
