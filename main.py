@@ -2006,39 +2006,52 @@ async def scrape_yelp_rating(name: str, location: str, client: httpx.AsyncClient
 
 
 async def scrape_tripadvisor_rating(name: str, location: str, client: httpx.AsyncClient) -> dict | None:
-    """Scrape TripAdvisor rating: Google search to find restaurant page, then fetch it."""
+    """Scrape TripAdvisor rating: DuckDuckGo search to find restaurant page, then fetch it."""
     import re as _re
+    from urllib.parse import unquote as _unquote
     search_q = f"site:tripadvisor.com {name} {location} restaurant"
-    google_url = f"https://www.google.com/search?q={quote(search_q)}"
-    try:
-        # Step 1: Google search via cf_fetch (real browser bypasses CAPTCHA/consent)
-        html = await cf_fetch(google_url, client)
-        if not html:
-            # Fallback to plain HTTP
-            html = await _fetch_html(google_url, client)
-        if not html:
-            print(f"[TripAdvisor] Google search returned nothing")
-            return None
-        print(f"[TripAdvisor] Google search HTML len={len(html)}")
 
-        # Step 2: Find a Restaurant_Review link in Google results
-        # Google wraps URLs in /url?q= redirects and may URL-encode them
-        from urllib.parse import unquote as _unquote
-        ta_link = _re.search(r'(https?://(?:www\.)?tripadvisor\.com/Restaurant_Review[^"\'&\s#]+)', html)
+    # Try DuckDuckGo HTML (no CAPTCHA), then Bing as fallback
+    ddg_url = f"https://html.duckduckgo.com/html/?q={quote(search_q)}"
+    bing_url = f"https://www.bing.com/search?q={quote(search_q)}"
+    try:
+        # Step 1: DuckDuckGo search (plain HTTP, no CAPTCHA)
+        html = await _fetch_html(ddg_url, client)
+        if not html or len(html) < 2000:
+            print(f"[TripAdvisor] DDG returned nothing, trying Bing")
+            html = await _fetch_html(bing_url, client)
+        if not html:
+            print(f"[TripAdvisor] search returned nothing")
+            return None
+        print(f"[TripAdvisor] search HTML len={len(html)}")
+
+        # Step 2: Find a Restaurant_Review link in search results
+        # DDG uses uddg= parameter for redirect URLs
+        ta_link = None
+        # Direct URL match
+        m = _re.search(r'(https?://(?:www\.)?tripadvisor\.com/Restaurant_Review[^"\'&\s#<>]+)', html)
+        if m:
+            ta_link = m.group(1)
         if not ta_link:
-            # Try URL-encoded version in Google's /url?q= wrapper
-            ta_link = _re.search(r'/url\?q=(https?(?:%3A|:)(?:%2F|/)(?:%2F|/)(?:www\.)?tripadvisor\.com(?:%2F|/)Restaurant_Review[^&"\']+)', html)
+            # DDG uddg= encoded URL
+            m = _re.search(r'uddg=(https?%3A%2F%2F(?:www\.)?tripadvisor\.com%2FRestaurant_Review[^&"\']+)', html)
+            if m:
+                ta_link = _unquote(m.group(1))
         if not ta_link:
-            # Try just finding tripadvisor.com anywhere with Restaurant_Review
-            ta_link = _re.search(r'tripadvisor\.com[/\\%]+Restaurant_Review[^"\'&\s#]*', html)
-            if ta_link:
-                raw = _unquote(ta_link.group(0))
-                ta_link_url = f"https://www.{raw}" if not raw.startswith("http") else raw
-            else:
-                print(f"[TripAdvisor] no Restaurant_Review link found in Google results")
-                return None
-        else:
-            ta_link_url = _unquote(ta_link.group(1))
+            # Bing redirect format
+            m = _re.search(r'href="[^"]*?(https?://(?:www\.)?tripadvisor\.com/Restaurant_Review[^"&\s#]+)', html)
+            if m:
+                ta_link = m.group(1)
+        if not ta_link:
+            # Broad match: any tripadvisor Restaurant_Review URL
+            m = _re.search(r'tripadvisor\.com[/%]+Restaurant_Review[^"\'&\s#<>]*', html)
+            if m:
+                raw = _unquote(m.group(0))
+                ta_link = f"https://www.{raw}" if not raw.startswith("http") else raw
+        if not ta_link:
+            print(f"[TripAdvisor] no Restaurant_Review link found in search results")
+            return None
+        ta_link_url = _unquote(ta_link).split("&")[0]  # clean trailing params
         print(f"[TripAdvisor] found restaurant page: {ta_link_url[:100]}")
 
         # Step 3: Fetch the restaurant page (try _fetch_html first, then cf_fetch)
@@ -2132,38 +2145,50 @@ async def scrape_google_reviews(name: str, location: str, client: httpx.AsyncCli
 
 
 async def scrape_opentable_rating(name: str, location: str, client: httpx.AsyncClient) -> dict | None:
-    """Scrape OpenTable rating: Google search to find restaurant page, then fetch it."""
+    """Scrape OpenTable rating: DuckDuckGo search to find restaurant page, then fetch it."""
     import re as _re
+    from urllib.parse import unquote as _unquote
     search_q = f"site:opentable.com {name} {location} restaurant"
-    google_url = f"https://www.google.com/search?q={quote(search_q)}"
-    try:
-        # Step 1: Google search via cf_fetch (real browser bypasses CAPTCHA/consent)
-        html = await cf_fetch(google_url, client)
-        if not html:
-            # Fallback to plain HTTP
-            html = await _fetch_html(google_url, client)
-        if not html:
-            print(f"[OpenTable] Google search returned nothing")
-            return None
-        print(f"[OpenTable] Google search HTML len={len(html)}")
 
-        # Step 2: Find an OpenTable restaurant link (/r/ pattern) in Google results
-        # Google wraps URLs in /url?q= redirects and may URL-encode them
-        from urllib.parse import unquote as _unquote
-        ot_link = _re.search(r'(https?://(?:www\.)?opentable\.com/r/[^"\'&\s#]+)', html)
-        if not ot_link:
-            # Try URL-encoded version in Google's /url?q= wrapper
-            ot_link = _re.search(r'/url\?q=(https?(?:%3A|:)(?:%2F|/)(?:%2F|/)(?:www\.)?opentable\.com(?:%2F|/)r(?:%2F|/)[^&"\']+)', html)
-        if not ot_link:
-            # Try any opentable.com link from Google results
-            ot_link = _re.search(r'/url\?q=(https?(?:%3A|:)(?:%2F|/)(?:%2F|/)(?:www\.)?opentable\.com(?:%2F|/)[^&"\']+)', html)
-        if not ot_link:
-            # Also try general opentable links in plain text
-            ot_link = _re.search(r'(https?://(?:www\.)?opentable\.com/[^"\'&\s#]*?restaurant[^"\'&\s#]*)', html, _re.I)
-        if not ot_link:
-            print(f"[OpenTable] no restaurant link found in Google results")
+    # Try DuckDuckGo HTML (no CAPTCHA), then Bing as fallback
+    ddg_url = f"https://html.duckduckgo.com/html/?q={quote(search_q)}"
+    bing_url = f"https://www.bing.com/search?q={quote(search_q)}"
+    try:
+        # Step 1: DuckDuckGo search (plain HTTP, no CAPTCHA)
+        html = await _fetch_html(ddg_url, client)
+        if not html or len(html) < 2000:
+            print(f"[OpenTable] DDG returned nothing, trying Bing")
+            html = await _fetch_html(bing_url, client)
+        if not html:
+            print(f"[OpenTable] search returned nothing")
             return None
-        ot_link_url = _unquote(ot_link.group(1))
+        print(f"[OpenTable] search HTML len={len(html)}")
+
+        # Step 2: Find an OpenTable restaurant link in search results
+        ot_link = None
+        # Direct /r/ URL match
+        m = _re.search(r'(https?://(?:www\.)?opentable\.com/r/[^"\'&\s#<>]+)', html)
+        if m:
+            ot_link = m.group(1)
+        if not ot_link:
+            # DDG uddg= encoded URL
+            m = _re.search(r'uddg=(https?%3A%2F%2F(?:www\.)?opentable\.com%2Fr%2F[^&"\']+)', html)
+            if m:
+                ot_link = _unquote(m.group(1))
+        if not ot_link:
+            # Any opentable.com link
+            m = _re.search(r'(https?://(?:www\.)?opentable\.com/[^"\'&\s#<>]+)', html)
+            if m:
+                ot_link = m.group(1)
+        if not ot_link:
+            # DDG encoded any opentable link
+            m = _re.search(r'uddg=(https?%3A%2F%2F(?:www\.)?opentable\.com%2F[^&"\']+)', html)
+            if m:
+                ot_link = _unquote(m.group(1))
+        if not ot_link:
+            print(f"[OpenTable] no restaurant link found in search results")
+            return None
+        ot_link_url = _unquote(ot_link).split("&")[0]  # clean trailing params
         print(f"[OpenTable] found restaurant page: {ot_link_url[:100]}")
 
         # Step 3: Fetch restaurant page
